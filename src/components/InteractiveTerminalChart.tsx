@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   BarChart2,
+  Clock,
   Eye,
   EyeOff,
   Layers,
@@ -8,8 +9,10 @@ import {
   Minimize2,
   Sliders,
   TrendingUp,
+  Zap,
 } from 'lucide-react';
 import { Candle, PreMarketBrief } from '../types';
+import { useLiveTicker } from '../services/useLiveTicker';
 
 interface InteractiveTerminalChartProps {
   brief: PreMarketBrief;
@@ -36,23 +39,41 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const [showGaps, setShowGaps] = useState(true);
   const [hoverCandle, setHoverCandle] = useState<Candle | null>(null);
 
-  // Select candles
+  // Live real-time price & bar close countdown
+  const { livePrice, priceDirection, isLiveConnected, countdown } = useLiveTicker(
+    symbol,
+    currentPrice,
+    timeframe
+  );
+
+  // Select candles and dynamically breathe active bar with live price
   const candles = useMemo(() => {
-    return timeframe === '1D' ? dailyCandles.slice(-14) : hourlyCandles.slice(-36);
-  }, [timeframe, dailyCandles, hourlyCandles]);
+    const raw = timeframe === '1D' ? dailyCandles.slice(-14) : hourlyCandles.slice(-36);
+    if (!raw.length) return raw;
+
+    // Dynamically update active bar (last candle) with live price
+    const last = raw[raw.length - 1];
+    const updatedLast: Candle = {
+      ...last,
+      close: livePrice,
+      high: Math.max(last.high, livePrice),
+      low: Math.min(last.low, livePrice),
+    };
+    return [...raw.slice(0, -1), updatedLast];
+  }, [timeframe, dailyCandles, hourlyCandles, livePrice]);
 
   // Dimensions
   const svgWidth = 960;
   const svgHeight = 440;
   const profileWidth = showProfile ? 140 : 0;
-  const chartWidth = svgWidth - profileWidth - 70; // 70px right y-axis margin
+  const chartWidth = svgWidth - profileWidth - 90; // 90px right y-axis margin for price & countdown tags
   const chartHeight = svgHeight - 40; // 40px bottom x-axis margin
   const marginTop = 20;
 
   // Min / Max calculation
   const { minPrice, maxPrice } = useMemo(() => {
-    let min = Math.min(...candles.map((c) => c.low));
-    let max = Math.max(...candles.map((c) => c.high));
+    let min = Math.min(...candles.map((c) => c.low), livePrice);
+    let max = Math.max(...candles.map((c) => c.high), livePrice);
 
     if (showPivots) {
       min = Math.min(min, pivots.s2);
@@ -63,9 +84,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       max = Math.max(max, volumeProfile.vah);
     }
 
-    const pad = (max - min) * 0.05 || currentPrice * 0.02;
+    const pad = (max - min) * 0.05 || livePrice * 0.02;
     return { minPrice: min - pad, maxPrice: max + pad };
-  }, [candles, showPivots, showProfile, pivots, volumeProfile, currentPrice]);
+  }, [candles, showPivots, showProfile, pivots, volumeProfile, livePrice]);
 
   const priceToY = (price: number) => {
     if (maxPrice <= minPrice) return chartHeight / 2;
@@ -98,12 +119,12 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </span>
           </span>
 
-          {/* Timeframe Buttons */}
-          <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
+          {/* Timeframe Buttons & Countdown Indicator */}
+          <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
             <button
               onClick={() => setTimeframe('1H')}
               className={`px-2.5 py-0.5 rounded transition ${
-                timeframe === '1H' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                timeframe === '1H' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               1H Execution
@@ -111,11 +132,16 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             <button
               onClick={() => setTimeframe('1D')}
               className={`px-2.5 py-0.5 rounded transition ${
-                timeframe === '1D' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                timeframe === '1D' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               1D Context
             </button>
+            <div className="h-3.5 w-px bg-slate-800 mx-1 hidden sm:block" />
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 font-bold text-[11px] border border-amber-500/20">
+              <Clock className="w-3 h-3 text-amber-400 animate-pulse" />
+              <span>{countdown.formatted}</span>
+            </div>
           </div>
         </div>
 
@@ -183,9 +209,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
         </div>
       </div>
 
-      {/* Crosshair Inspection Strip */}
-      <div className="flex flex-wrap items-center justify-between text-xs font-mono bg-slate-950 p-2.5 rounded border border-slate-800 text-slate-400">
-        <div className="flex items-center space-x-4">
+      {/* Crosshair Inspection & Real-Time Bar Close Strip */}
+      <div className="flex flex-wrap items-center justify-between text-xs font-mono bg-slate-950 p-2.5 rounded border border-slate-800 text-slate-400 gap-3">
+        <div className="flex flex-wrap items-center space-x-3 sm:space-x-4">
           <span>
             DATE:{' '}
             <span className="text-slate-200">
@@ -226,8 +252,52 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           </span>
         </div>
 
-        <div className="text-cyan-400 font-bold">
-          SPOT: ${currentPrice.toFixed(2)}
+        {/* Live Price & Bar Close Countdown Indicators */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {/* Live Price Tag with flash animation */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-700">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'
+              }`}
+            />
+            <span className="text-[10px] text-slate-400 uppercase font-semibold">
+              {isLiveConnected ? 'Live Feed' : 'Spot'}:
+            </span>
+            <span
+              className={`font-bold transition-colors duration-200 ${
+                priceDirection === 'up'
+                  ? 'text-emerald-400'
+                  : priceDirection === 'down'
+                  ? 'text-rose-400'
+                  : 'text-cyan-300'
+              }`}
+            >
+              ${livePrice >= 1000 ? livePrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : livePrice.toFixed(2)}
+            </span>
+          </div>
+
+          {/* Bar Close Countdown Pill */}
+          <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">
+            <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+            <span className="text-[10px] text-amber-200 uppercase font-bold">
+              {timeframe} Close:
+            </span>
+            <span className="font-bold text-amber-300 font-mono tracking-wider">
+              {countdown.formatted}
+            </span>
+            {/* Progress bar */}
+            <div className="w-10 h-1.5 bg-slate-800 rounded-full overflow-hidden hidden sm:block">
+              <div
+                className="h-full bg-amber-400 rounded-full transition-all duration-1000"
+                style={{ width: `${countdown.progressPct}%` }}
+                title={`${countdown.progressPct.toFixed(0)}% elapsed`}
+              />
+            </div>
+            <span className="text-[9px] text-amber-400/80 hidden md:inline">
+              ({countdown.closesAtUTC})
+            </span>
+          </div>
         </div>
       </div>
 
@@ -578,37 +648,157 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </g>
           )}
 
-          {/* Current Spot Price Tracker Line */}
-          <g className="spot-price-tracker">
-            <line
-              x1={0}
-              y1={priceToY(currentPrice)}
-              x2={chartWidth + profileWidth}
-              y2={priceToY(currentPrice)}
-              stroke="#06b6d4"
-              strokeWidth={1.5}
-              strokeDasharray="2 2"
-            />
-            <rect
-              x={chartWidth + profileWidth - 65}
-              y={priceToY(currentPrice) - 9}
-              width={60}
-              height={18}
-              fill="#06b6d4"
-              rx={3}
-            />
-            <text
-              x={chartWidth + profileWidth - 35}
-              y={priceToY(currentPrice) + 4}
-              fill="#0f172a"
-              fontSize={10}
-              fontFamily="monospace"
-              fontWeight="bold"
-              textAnchor="middle"
-            >
-              ${currentPrice >= 1000 ? Math.round(currentPrice) : currentPrice.toFixed(2)}
-            </text>
-          </g>
+          {/* Floating HUD over Active Candle */}
+          {candles.length > 0 && (() => {
+            const lastIndex = candles.length - 1;
+            const lastX = lastIndex * candleSpacing + candleSpacing / 2;
+            const lastCandle = candles[lastIndex];
+            const topY = priceToY(Math.max(lastCandle.high, livePrice));
+            const badgeY = Math.max(marginTop + 8, topY - 26);
+
+            return (
+              <g className="active-candle-hud select-none">
+                {/* Dashed connector down to candle wick */}
+                <line
+                  x1={lastX}
+                  y1={badgeY + 14}
+                  x2={lastX}
+                  y2={topY}
+                  stroke="#475569"
+                  strokeWidth={1}
+                  strokeDasharray="2 2"
+                />
+                {/* Floating pill background */}
+                <rect
+                  x={lastX - 48}
+                  y={badgeY}
+                  width={96}
+                  height={16}
+                  fill="#020617"
+                  stroke={
+                    priceDirection === 'up'
+                      ? '#10b981'
+                      : priceDirection === 'down'
+                      ? '#ef4444'
+                      : '#06b6d4'
+                  }
+                  strokeWidth={1.2}
+                  rx={4}
+                  opacity={0.95}
+                />
+                <text
+                  x={lastX}
+                  y={badgeY + 11.5}
+                  fill={
+                    priceDirection === 'up'
+                      ? '#34d399'
+                      : priceDirection === 'down'
+                      ? '#f87171'
+                      : '#38bdf8'
+                  }
+                  fontSize={8.5}
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                  textAnchor="middle"
+                >
+                  LIVE • ⏱ {countdown.formatted}
+                </text>
+              </g>
+            );
+          })()}
+
+          {/* Real-time Spot Price Ray & Right-Axis Bar Close Countdown Badge */}
+          {(() => {
+            const yLive = priceToY(livePrice);
+            const tagX = chartWidth + profileWidth + 4;
+            const clampedY = Math.min(Math.max(marginTop + 12, yLive), chartHeight - 22);
+
+            const rayColor =
+              priceDirection === 'up'
+                ? '#10b981'
+                : priceDirection === 'down'
+                ? '#ef4444'
+                : '#06b6d4';
+
+            return (
+              <g className="spot-price-tracker select-none">
+                {/* Horizontal Ray Across Chart */}
+                <line
+                  x1={0}
+                  y1={yLive}
+                  x2={chartWidth + profileWidth}
+                  y2={yLive}
+                  stroke={rayColor}
+                  strokeWidth={1.5}
+                  strokeDasharray="3 2"
+                />
+
+                {/* Intersection Pulse Dot on Last Active Bar */}
+                {candles.length > 0 && (
+                  <circle
+                    cx={(candles.length - 1) * candleSpacing + candleSpacing / 2}
+                    cy={yLive}
+                    r={3.5}
+                    fill={rayColor}
+                    className="animate-ping opacity-75"
+                  />
+                )}
+
+                {/* Pointer Arrow on Right Margin */}
+                <polygon
+                  points={`${tagX},${yLive} ${tagX + 4},${yLive - 3} ${tagX + 4},${yLive + 3}`}
+                  fill={rayColor}
+                />
+
+                {/* Right Margin: Live Price Tag */}
+                <g transform={`translate(${tagX + 4}, ${clampedY - 10})`}>
+                  {/* Live Price Tag Box */}
+                  <rect
+                    x={0}
+                    y={0}
+                    width={78}
+                    height={18}
+                    fill={rayColor}
+                    rx={3}
+                  />
+                  <text
+                    x={39}
+                    y={13}
+                    fill="#020617"
+                    fontSize={10}
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    ${livePrice >= 1000 ? Math.round(livePrice).toLocaleString() : livePrice.toFixed(2)}
+                  </text>
+
+                  {/* Bar Close Countdown Attached Tag */}
+                  <rect
+                    x={0}
+                    y={20}
+                    width={78}
+                    height={16}
+                    fill="#020617"
+                    stroke="#f59e0b"
+                    strokeWidth={1}
+                    rx={3}
+                  />
+                  <text
+                    x={39}
+                    y={32}
+                    fill="#fbbf24"
+                    fontSize={9.5}
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    ⏱ {countdown.formatted}
+                  </text>
+                </g>
+              </g>
+            );
+          })()}
         </svg>
       </div>
 

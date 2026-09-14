@@ -4,6 +4,8 @@ export interface RawMarketPayload {
   symbol: TickerSymbol;
   dailyCandles: Candle[];
   hourlyCandles: Candle[];
+  fifteenMinCandles?: Candle[];
+  fiveMinCandles?: Candle[];
   currentPrice: number;
   high24h: number;
   low24h: number;
@@ -23,8 +25,13 @@ const BINANCE_PAIR_MAP: Record<TickerSymbol, string> = {
   'XAUT-USD': 'PAXGUSDT',
 };
 
-// Fallback seed generator if offline or rate limited (provides 30 full daily candles)
-function getFallbackCandles(symbol: TickerSymbol): { daily: Candle[]; hourly: Candle[] } {
+// Fallback seed generator if offline or rate limited (provides 30 full daily candles, 48 hourly, 48 15m, 48 5m)
+function getFallbackCandles(symbol: TickerSymbol): {
+  daily: Candle[];
+  hourly: Candle[];
+  fifteenMin: Candle[];
+  fiveMin: Candle[];
+} {
   const basePrice =
     symbol === 'BTC-USD'
       ? 78200
@@ -36,6 +43,8 @@ function getFallbackCandles(symbol: TickerSymbol): { daily: Candle[]; hourly: Ca
   const now = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
   const hourMs = 60 * 60 * 1000;
+  const fifteenMs = 15 * 60 * 1000;
+  const fiveMs = 5 * 60 * 1000;
 
   // Generate 30 completed daily candles for genuine 20-day moving average volume
   const daily: Candle[] = [];
@@ -51,7 +60,16 @@ function getFallbackCandles(symbol: TickerSymbol): { daily: Candle[]; hourly: Ca
     const low = open - Math.abs(Math.sin(i) * range);
     const close = (open + high + low) / 3;
     const vwap = (open + high + low + close) / 4;
-    daily.push({ timestamp: time, open, high, low, close, volume: vol, vwap });
+    daily.push({
+      timestamp: time,
+      open,
+      high,
+      low,
+      close,
+      volume: vol,
+      quoteVolume: vol * close,
+      vwap,
+    });
     prevClose = close;
   }
 
@@ -73,12 +91,61 @@ function getFallbackCandles(symbol: TickerSymbol): { daily: Candle[]; hourly: Ca
       low,
       close,
       volume: vol,
+      quoteVolume: vol * close,
       vwap: (open + high + low + close) / 4,
     });
     hClose = close;
   }
 
-  return { daily, hourly };
+  const fifteenMin: Candle[] = [];
+  let m15Close = hourly[hourly.length - 1].close;
+  for (let m = 48; m >= 0; m--) {
+    const time = now - m * fifteenMs;
+    const mRange = m15Close * 0.0035;
+    const open = m15Close;
+    const high = open + Math.abs(Math.sin(m * 0.85) * mRange);
+    const low = open - Math.abs(Math.cos(m * 0.85) * mRange);
+    const close = (open + high + low) / 3;
+    const vol =
+      (basePrice > 10000 ? 250 : 1500) * (0.7 + Math.sin(m * 0.5) * 0.3);
+    fifteenMin.push({
+      timestamp: time,
+      open,
+      high,
+      low,
+      close,
+      volume: vol,
+      quoteVolume: vol * close,
+      vwap: (open + high + low + close) / 4,
+    });
+    m15Close = close;
+  }
+
+  const fiveMin: Candle[] = [];
+  let m5Close = fifteenMin[fifteenMin.length - 1].close;
+  for (let m = 48; m >= 0; m--) {
+    const time = now - m * fiveMs;
+    const mRange = m5Close * 0.002;
+    const open = m5Close;
+    const high = open + Math.abs(Math.sin(m * 1.2) * mRange);
+    const low = open - Math.abs(Math.cos(m * 1.2) * mRange);
+    const close = (open + high + low) / 3;
+    const vol =
+      (basePrice > 10000 ? 90 : 600) * (0.6 + Math.cos(m * 0.4) * 0.4);
+    fiveMin.push({
+      timestamp: time,
+      open,
+      high,
+      low,
+      close,
+      volume: vol,
+      quoteVolume: vol * close,
+      vwap: (open + high + low + close) / 4,
+    });
+    m5Close = close;
+  }
+
+  return { daily, hourly, fifteenMin, fiveMin };
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number = 3500): Promise<Response> {
@@ -114,7 +181,7 @@ function computeHistoricalVol30d(candles: Candle[]): number {
 }
 
 export function getFallbackPayload(symbol: TickerSymbol): RawMarketPayload {
-  const { daily, hourly } = getFallbackCandles(symbol);
+  const { daily, hourly, fifteenMin, fiveMin } = getFallbackCandles(symbol);
   const last = daily[daily.length - 1];
   const prev = daily[daily.length - 2];
   const hv30 = computeHistoricalVol30d(daily);
@@ -123,6 +190,8 @@ export function getFallbackPayload(symbol: TickerSymbol): RawMarketPayload {
     symbol,
     dailyCandles: daily,
     hourlyCandles: hourly,
+    fifteenMinCandles: fifteenMin,
+    fiveMinCandles: fiveMin,
     currentPrice: last.close,
     high24h: last.high,
     low24h: last.low,
@@ -206,6 +275,8 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
             symbol,
             dailyCandles,
             hourlyCandles,
+            fifteenMinCandles: getFallbackCandles('XAUT-USD').fifteenMin,
+            fiveMinCandles: getFallbackCandles('XAUT-USD').fiveMin,
             currentPrice: lastPrice,
             high24h,
             low24h,
@@ -230,7 +301,7 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
         console.warn('Bitfinex fetch failed, falling back to Binance PAXG proxy', err);
         const binanceSymbol = 'PAXGUSDT';
         dataSource = 'Binance Public REST v3 (PAXG Proxy for Gold)';
-        const [klineRes, tickerRes, hourRes] = await Promise.all([
+        const [klineRes, tickerRes, hourRes, m15Res, m5Res] = await Promise.all([
           fetchWithTimeout(
             `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1d&limit=30`
           ),
@@ -240,47 +311,55 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
           fetchWithTimeout(
             `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1h&limit=48`
           ),
+          fetchWithTimeout(
+            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=15m&limit=48`
+          ).catch(() => null),
+          fetchWithTimeout(
+            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=5m&limit=48`
+          ).catch(() => null),
         ]);
 
         if (klineRes.ok && tickerRes.ok) {
           const klines = await klineRes.json();
           const t = await tickerRes.json();
           const hKlines = hourRes.ok ? await hourRes.json() : [];
+          const m15Klines = m15Res && m15Res.ok ? await m15Res.json() : [];
+          const m5Klines = m5Res && m5Res.ok ? await m5Res.json() : [];
+          const fallback = getFallbackCandles('XAUT-USD');
 
-          const dailyCandles = klines.map((k: (string | number)[]) => ({
-            timestamp: Number(k[0]),
-            open: parseFloat(String(k[1])),
-            high: parseFloat(String(k[2])),
-            low: parseFloat(String(k[3])),
-            close: parseFloat(String(k[4])),
-            volume: parseFloat(String(k[5])),
-            vwap:
-              (parseFloat(String(k[2])) +
-                parseFloat(String(k[3])) +
-                parseFloat(String(k[4]))) /
-              3,
-          }));
+          const mapBinanceCandles = (arr: any[]): Candle[] =>
+            arr.map((k: (string | number)[]) => {
+              const open = parseFloat(String(k[1]));
+              const high = parseFloat(String(k[2]));
+              const low = parseFloat(String(k[3]));
+              const close = parseFloat(String(k[4]));
+              const volume = parseFloat(String(k[5]));
+              const quoteVol = parseFloat(String(k[7]));
+              const vwap = quoteVol > 0 && volume > 0 ? quoteVol / volume : (high + low + close) / 3;
+              return {
+                timestamp: Number(k[0]),
+                open,
+                high,
+                low,
+                close,
+                volume,
+                quoteVolume: quoteVol,
+                vwap,
+              };
+            });
 
-          const hourlyCandles = hKlines.map((k: (string | number)[]) => ({
-            timestamp: Number(k[0]),
-            open: parseFloat(String(k[1])),
-            high: parseFloat(String(k[2])),
-            low: parseFloat(String(k[3])),
-            close: parseFloat(String(k[4])),
-            volume: parseFloat(String(k[5])),
-            vwap:
-              (parseFloat(String(k[2])) +
-                parseFloat(String(k[3])) +
-                parseFloat(String(k[4]))) /
-              3,
-          }));
-
+          const dailyCandles = mapBinanceCandles(klines);
+          const hourlyCandles = hKlines.length ? mapBinanceCandles(hKlines) : fallback.hourly;
+          const fifteenMinCandles = m15Klines.length ? mapBinanceCandles(m15Klines) : fallback.fifteenMin;
+          const fiveMinCandles = m5Klines.length ? mapBinanceCandles(m5Klines) : fallback.fiveMin;
           const hv30 = computeHistoricalVol30d(dailyCandles);
 
           return {
             symbol: 'XAUT-USD',
             dailyCandles,
             hourlyCandles,
+            fifteenMinCandles,
+            fiveMinCandles,
             currentPrice: parseFloat(t.lastPrice),
             high24h: parseFloat(t.highPrice),
             low24h: parseFloat(t.lowPrice),
@@ -307,7 +386,7 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
     // BTC, ETH, or SOL from Binance
     const binancePair = BINANCE_PAIR_MAP[symbol] || 'BTCUSDT';
 
-    const [klineRes, tickerRes, hourRes] = await Promise.all([
+    const [klineRes, tickerRes, hourRes, fifteenRes, fiveRes] = await Promise.all([
       fetchWithTimeout(
         `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1d&limit=30`
       ),
@@ -317,6 +396,12 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
       fetchWithTimeout(
         `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1h&limit=48`
       ),
+      fetchWithTimeout(
+        `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=15m&limit=48`
+      ).catch(() => null),
+      fetchWithTimeout(
+        `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=5m&limit=48`
+      ).catch(() => null),
     ]);
 
     if (!klineRes.ok || !tickerRes.ok) {
@@ -326,46 +411,35 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
     const rawKlines = await klineRes.json();
     const ticker = await tickerRes.json();
     const rawHourly = hourRes.ok ? await hourRes.json() : [];
+    const raw15 = fifteenRes && fifteenRes.ok ? await fifteenRes.json() : [];
+    const raw5 = fiveRes && fiveRes.ok ? await fiveRes.json() : [];
+    const fallback = getFallbackCandles(symbol);
 
-    const dailyCandles: Candle[] = rawKlines.map((k: (string | number)[]) => {
-      const open = parseFloat(String(k[1]));
-      const high = parseFloat(String(k[2]));
-      const low = parseFloat(String(k[3]));
-      const close = parseFloat(String(k[4]));
-      const volume = parseFloat(String(k[5]));
-      const quoteVol = parseFloat(String(k[7]));
-      const vwap = quoteVol > 0 && volume > 0 ? quoteVol / volume : (high + low + close) / 3;
-      return {
-        timestamp: Number(k[0]),
-        open,
-        high,
-        low,
-        close,
-        volume,
-        quoteVolume: quoteVol,
-        vwap,
-      };
-    });
+    const parseKlines = (arr: any[]): Candle[] =>
+      arr.map((k: (string | number)[]) => {
+        const open = parseFloat(String(k[1]));
+        const high = parseFloat(String(k[2]));
+        const low = parseFloat(String(k[3]));
+        const close = parseFloat(String(k[4]));
+        const volume = parseFloat(String(k[5]));
+        const quoteVol = parseFloat(String(k[7]));
+        const vwap = quoteVol > 0 && volume > 0 ? quoteVol / volume : (high + low + close) / 3;
+        return {
+          timestamp: Number(k[0]),
+          open,
+          high,
+          low,
+          close,
+          volume,
+          quoteVolume: quoteVol,
+          vwap,
+        };
+      });
 
-    const hourlyCandles: Candle[] = rawHourly.map((k: (string | number)[]) => {
-      const open = parseFloat(String(k[1]));
-      const high = parseFloat(String(k[2]));
-      const low = parseFloat(String(k[3]));
-      const close = parseFloat(String(k[4]));
-      const volume = parseFloat(String(k[5]));
-      const quoteVol = parseFloat(String(k[7]));
-      const vwap = quoteVol > 0 && volume > 0 ? quoteVol / volume : (high + low + close) / 3;
-      return {
-        timestamp: Number(k[0]),
-        open,
-        high,
-        low,
-        close,
-        volume,
-        quoteVolume: quoteVol,
-        vwap,
-      };
-    });
+    const dailyCandles: Candle[] = parseKlines(rawKlines);
+    const hourlyCandles: Candle[] = rawHourly.length ? parseKlines(rawHourly) : fallback.hourly;
+    const fifteenMinCandles: Candle[] = raw15.length ? parseKlines(raw15) : fallback.fifteenMin;
+    const fiveMinCandles: Candle[] = raw5.length ? parseKlines(raw5) : fallback.fiveMin;
 
     const lastSpotPrice = parseFloat(ticker.lastPrice);
     const hv30 = computeHistoricalVol30d(dailyCandles);
@@ -547,6 +621,8 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
       symbol,
       dailyCandles,
       hourlyCandles,
+      fifteenMinCandles,
+      fiveMinCandles,
       currentPrice: lastSpotPrice,
       high24h: parseFloat(ticker.highPrice),
       low24h: parseFloat(ticker.lowPrice),

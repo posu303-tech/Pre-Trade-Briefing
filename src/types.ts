@@ -2,6 +2,8 @@ export type TickerSymbol = 'BTC-USD' | 'ETH-USD' | 'SOL-USD' | 'XAUT-USD';
 
 export type TradingSession = 'ALL' | 'ASIAN' | 'EUROPEAN' | 'US';
 
+export type ChartTimeframe = '5m' | '15m' | '1H' | '1D';
+
 export interface Candle {
   timestamp: number;
   open: number;
@@ -211,4 +213,6 @@ export interface PreMarketBrief {
   catalysts: CatalystEvent[];
   dailyCandles: Candle[];
   hourlyCandles: Candle[];
+  fifteenMinCandles?: Candle[];
+  fiveMinCandles?: Candle[];
 }

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BarChart2,
   Clock,
@@ -9,9 +9,10 @@ import {
   Minimize2,
   Sliders,
   TrendingUp,
+  X,
   Zap,
 } from 'lucide-react';
-import { Candle, PreMarketBrief } from '../types';
+import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
 import { useLiveTicker } from '../services/useLiveTicker';
 
 interface InteractiveTerminalChartProps {
@@ -23,6 +24,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     symbol,
     dailyCandles,
     hourlyCandles,
+    fifteenMinCandles,
+    fiveMinCandles,
     currentPrice,
     pivots,
     volumeProfile,
@@ -31,13 +34,25 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     gaps,
   } = brief;
 
-  const [timeframe, setTimeframe] = useState<'1H' | '1D'>('1H');
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>('1H');
+  const [isMaximized, setIsMaximized] = useState<boolean>(false);
   const [showPivots, setShowPivots] = useState(true);
   const [showVwap, setShowVwap] = useState(true);
   const [showProfile, setShowProfile] = useState(true);
   const [showMAs, setShowMAs] = useState(true);
   const [showGaps, setShowGaps] = useState(true);
   const [hoverCandle, setHoverCandle] = useState<Candle | null>(null);
+
+  // Close maximize on ESC key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isMaximized) {
+        setIsMaximized(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMaximized]);
 
   // Live real-time price & bar close countdown
   const { livePrice, priceDirection, isLiveConnected, countdown } = useLiveTicker(
@@ -46,9 +61,22 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     timeframe
   );
 
-  // Select candles and dynamically breathe active bar with live price
+  // Select candles according to timeframe (5m, 15m, 1H, 1D) and dynamically breathe active bar with live price
   const candles = useMemo(() => {
-    const raw = timeframe === '1D' ? dailyCandles.slice(-14) : hourlyCandles.slice(-36);
+    let raw: Candle[] = [];
+    if (timeframe === '1D') {
+      raw = dailyCandles.slice(-14);
+    } else if (timeframe === '1H') {
+      raw = hourlyCandles.slice(-36);
+    } else if (timeframe === '15m') {
+      raw = (fifteenMinCandles && fifteenMinCandles.length > 0)
+        ? fifteenMinCandles.slice(-36)
+        : hourlyCandles.slice(-36);
+    } else if (timeframe === '5m') {
+      raw = (fiveMinCandles && fiveMinCandles.length > 0)
+        ? fiveMinCandles.slice(-36)
+        : hourlyCandles.slice(-36);
+    }
     if (!raw.length) return raw;
 
     // Dynamically update active bar (last candle) with live price
@@ -60,13 +88,13 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       low: Math.min(last.low, livePrice),
     };
     return [...raw.slice(0, -1), updatedLast];
-  }, [timeframe, dailyCandles, hourlyCandles, livePrice]);
+  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice]);
 
-  // Dimensions
-  const svgWidth = 960;
-  const svgHeight = 440;
-  const profileWidth = showProfile ? 140 : 0;
-  const chartWidth = svgWidth - profileWidth - 90; // 90px right y-axis margin for price & countdown tags
+  // Dimensions: dynamically expand when maximized for broad panoramic clarity
+  const svgWidth = isMaximized ? 1400 : 960;
+  const svgHeight = isMaximized ? 620 : 440;
+  const profileWidth = showProfile ? (isMaximized ? 240 : 140) : 0;
+  const chartWidth = svgWidth - profileWidth - (isMaximized ? 100 : 90); // right y-axis margin for price & countdown tags
   const chartHeight = svgHeight - 40; // 40px bottom x-axis margin
   const marginTop = 20;
 
@@ -107,8 +135,12 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     return ticks;
   }, [minPrice, maxPrice]);
 
+  const containerClasses = isMaximized
+    ? 'fixed inset-0 z-50 bg-slate-950/98 backdrop-blur-md p-4 sm:p-6 overflow-y-auto flex flex-col justify-start space-y-4'
+    : 'bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm max-w-6xl mx-auto space-y-4';
+
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm max-w-6xl mx-auto space-y-4">
+    <div className={containerClasses}>
       {/* Chart Top Bar Controls */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div className="flex items-center space-x-3">
@@ -117,25 +149,46 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-normal">
               Live Terminal Chart
             </span>
+            {isMaximized && (
+              <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30">
+                MAXIMIZED VIEW (ESC to Exit)
+              </span>
+            )}
           </span>
 
-          {/* Timeframe Buttons & Countdown Indicator */}
-          <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
+          {/* Timeframe Buttons (5m, 15m, 1H, 1D) & Countdown Indicator */}
+          <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
+            <button
+              onClick={() => setTimeframe('5m')}
+              className={`px-2 py-0.5 rounded transition ${
+                timeframe === '5m' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              5m
+            </button>
+            <button
+              onClick={() => setTimeframe('15m')}
+              className={`px-2 py-0.5 rounded transition ${
+                timeframe === '15m' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              15m
+            </button>
             <button
               onClick={() => setTimeframe('1H')}
-              className={`px-2.5 py-0.5 rounded transition ${
+              className={`px-2 py-0.5 rounded transition ${
                 timeframe === '1H' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              1H Execution
+              1H
             </button>
             <button
               onClick={() => setTimeframe('1D')}
-              className={`px-2.5 py-0.5 rounded transition ${
+              className={`px-2 py-0.5 rounded transition ${
                 timeframe === '1D' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              1D Context
+              1D
             </button>
             <div className="h-3.5 w-px bg-slate-800 mx-1 hidden sm:block" />
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 font-bold text-[11px] border border-amber-500/20">
@@ -145,7 +198,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           </div>
         </div>
 
-        {/* Overlay Toggles */}
+        {/* Overlay Toggles & Maximize Button */}
         <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
           <button
             onClick={() => setShowPivots(!showPivots)}
@@ -205,6 +258,29 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           >
             {showGaps ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
             <span>FVG Gaps</span>
+          </button>
+
+          {/* Maximize / Minimize Chart and Profile Button */}
+          <button
+            onClick={() => setIsMaximized(!isMaximized)}
+            className={`px-3 py-1 rounded border flex items-center gap-1.5 transition font-bold ${
+              isMaximized
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+            }`}
+            title={isMaximized ? 'Minimize Chart (or press Esc)' : 'Maximize Chart and Volume Profile'}
+          >
+            {isMaximized ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Minimize</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Maximize Chart & Profile</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -594,9 +670,22 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 width={profileWidth}
                 height={chartHeight}
                 fill="#020617"
-                opacity={0.8}
+                opacity={0.85}
                 stroke="#1e293b"
               />
+
+              {isMaximized && (
+                <text
+                  x={10}
+                  y={marginTop + 14}
+                  fill="#94a3b8"
+                  fontSize={10}
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                >
+                  VOLUME PROFILE (70% VA)
+                </text>
+              )}
 
               {/* Volume Profile Bins */}
               {(() => {
@@ -606,7 +695,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
                 return volumeProfile.bins.map((bin, idx) => {
                   const y = priceToY(bin.price);
-                  const barWidth = maxBinVol > 0 ? (bin.volume / maxBinVol) * (profileWidth - 10) : 0;
+                  const barWidth = maxBinVol > 0 ? (bin.volume / maxBinVol) * (profileWidth - (isMaximized ? 40 : 10)) : 0;
                   const isPOC = bin.isPOC;
                   const isVA = bin.isInValueArea;
 
@@ -629,6 +718,18 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                           strokeWidth={1.5}
                           strokeDasharray="4 2"
                         />
+                      )}
+                      {isMaximized && isPOC && (
+                        <text
+                          x={barWidth + 4}
+                          y={y + 3}
+                          fill="#fbbf24"
+                          fontSize={9}
+                          fontFamily="monospace"
+                          fontWeight="bold"
+                        >
+                          POC
+                        </text>
                       )}
                     </g>
                   );

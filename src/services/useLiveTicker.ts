@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { TickerSymbol } from '../types';
+import { ChartTimeframe, TickerSymbol } from '../types';
 
 export interface BarCountdown {
   formatted: string;
@@ -15,11 +15,17 @@ export interface LiveTickerState {
   countdown: BarCountdown;
 }
 
-function calculateCountdown(timeframe: '1H' | '1D'): BarCountdown {
+function calculateCountdown(timeframe: ChartTimeframe): BarCountdown {
   const now = Date.now();
 
-  if (timeframe === '1H') {
-    const barDuration = 3600 * 1000;
+  if (timeframe === '5m' || timeframe === '15m' || timeframe === '1H') {
+    const barDuration =
+      timeframe === '5m'
+        ? 5 * 60 * 1000
+        : timeframe === '15m'
+        ? 15 * 60 * 1000
+        : 3600 * 1000;
+
     const currentBarStart = Math.floor(now / barDuration) * barDuration;
     const nextBarClose = currentBarStart + barDuration;
     const remainingMs = Math.max(0, nextBarClose - now);
@@ -89,7 +95,7 @@ function calculateCountdown(timeframe: '1H' | '1D'): BarCountdown {
 export function useLiveTicker(
   symbol: TickerSymbol,
   initialPrice: number,
-  timeframe: '1H' | '1D'
+  timeframe: ChartTimeframe
 ): LiveTickerState {
   const [livePrice, setLivePrice] = useState<number>(initialPrice);
   const [priceDirection, setPriceDirection] = useState<'up' | 'down' | 'neutral'>('neutral');

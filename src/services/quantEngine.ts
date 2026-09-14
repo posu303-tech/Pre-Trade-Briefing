@@ -984,7 +984,9 @@ export function generateDeskBrief(raw: RawMarketPayload, session: TradingSession
     options,
     catalysts,
     dailyCandles,
-    hourlyCandles
+    hourlyCandles,
+    fifteenMinCandles: raw.fifteenMinCandles,
+    fiveMinCandles: raw.fiveMinCandles,
   };
 }
 

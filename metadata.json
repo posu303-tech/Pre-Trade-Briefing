@@ -1,0 +1,6 @@
+{
+  "name": "Pre-Market Technical Brief - Sell-Side Trading Desk",
+  "description": "Institutional pre-market technical brief and intraday trade planning terminal for BTC, ETH, SOL, and XAUT with live OHLCV, computed floor pivots, VWAP, volume profile, ATR stop-sizing, and strict desk risk notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

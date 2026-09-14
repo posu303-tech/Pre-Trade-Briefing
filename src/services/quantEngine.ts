@@ -1,6 +1,7 @@
 import {
   ATRData,
   Candle,
+  CatalystEvent,
   FibonacciData,
   FibonacciLevel,
   KeyLevelItem,
@@ -302,7 +303,7 @@ export function computeATR(dailyCandles: Candle[], hourlyCandles: Candle[]): ATR
 
 export function computeFibonacci(dailyCandles: Candle[]): FibonacciData {
   // Locate significant swing high and swing low in the last 10-15 daily candles
-  const window = dailyCandles.slice(-14);
+  const candleSlice = dailyCandles.slice(-14);
   let swingHigh = -Infinity;
   let swingHighIdx = 0;
   let swingHighDate = '';
@@ -311,8 +312,8 @@ export function computeFibonacci(dailyCandles: Candle[]): FibonacciData {
   let swingLowIdx = 0;
   let swingLowDate = '';
 
-  for (let i = 0; i < window.length; i++) {
-    const c = window[i];
+  for (let i = 0; i < candleSlice.length; i++) {
+    const c = candleSlice[i];
     if (c.high > swingHigh) {
       swingHigh = c.high;
       swingHighIdx = i;
@@ -558,7 +559,10 @@ export function deriveMarketStructure(
   sessionVwap: number,
   vp: VolumeProfileData,
   mas: MovingAverageStatus[],
-  symbol: TickerSymbol
+  symbol: TickerSymbol,
+  dailyCandles: Candle[],
+  change24hPercent: number,
+  volumeRatio20d: number
 ): MarketStructure {
   const ema9 = mas.find(m => m.period === 9 && m.type === 'EMA')?.value || currentPrice;
   const sma50 = mas.find(m => m.period === 50 && m.type === 'SMA')?.value || currentPrice;
@@ -582,16 +586,40 @@ export function deriveMarketStructure(
     dominantRegime = `Trading below 10-session Value Area Low (${vp.val.toLocaleString()}) in responsive discount discovery`;
   }
 
-  let relativeStrength = '';
-  if (symbol === 'BTC-USD') {
-    relativeStrength = 'Outperforming broader altcoin index; BTC dominance holding firm above 57.2% while consolidating above prior day VWAP.';
-  } else if (symbol === 'ETH-USD') {
-    relativeStrength = 'Underperforming BTC on the ETH/BTC cross (0.032 ratio compression); holding support at S1 pivot.';
-  } else if (symbol === 'SOL-USD') {
-    relativeStrength = 'Demonstrating high relative beta vs BTC (+1.4x intraday amplitude); leading rebounds during London session auctions.';
-  } else {
-    relativeStrength = 'Trading in tight safe-haven correlation with physical spot gold (XAU/USD); zero crypto beta, serving as defensive collateral hedge.';
-  }
+  // Dynamic calculation of relative strength metrics from actual historical candles
+  const last20Candles = dailyCandles.slice(-20);
+  const high20d = last20Candles.length > 0 ? Math.max(...last20Candles.map(c => c.high)) : currentPrice;
+  const low20d = last20Candles.length > 0 ? Math.min(...last20Candles.map(c => c.low)) : currentPrice;
+  const range20dPos = high20d > low20d ? Math.round(((currentPrice - low20d) / (high20d - low20d)) * 100) : 50;
+
+  const return7d =
+    dailyCandles.length >= 8
+      ? ((currentPrice - dailyCandles[dailyCandles.length - 8].close) /
+          dailyCandles[dailyCandles.length - 8].close) *
+        100
+      : change24hPercent;
+
+  const sign24 = change24hPercent >= 0 ? '+' : '';
+  const sign7 = return7d >= 0 ? '+' : '';
+  const pacingDesc =
+    volumeRatio20d >= 1.2
+      ? 'elevated institutional volume pacing'
+      : volumeRatio20d <= 0.8
+      ? 'contracted volume pacing'
+      : 'in-line volume pacing';
+
+  const rangeDesc =
+    range20dPos >= 75
+      ? 'upper quartile (expansion testing)'
+      : range20dPos <= 25
+      ? 'lower quartile (discount accumulation)'
+      : 'mid-range equilibrium';
+
+  const relativeStrength = `24H price change is ${sign24}${change24hPercent.toFixed(
+    2
+  )}% with trailing 7-day return of ${sign7}${return7d.toFixed(
+    2
+  )}%. Intraday volume is running at ${volumeRatio20d}x of the 20-day mean (${pacingDesc}). Price sits in the ${rangeDesc} (${range20dPos}th percentile of the 20-day range: $${low20d.toLocaleString()} - $${high20d.toLocaleString()}).`;
 
   const htfDetail = `${htfTrend} structure: Price is ${currentPrice > sma50 ? 'above' : 'below'} Daily 50 SMA (${sma50.toLocaleString()}) and ${currentPrice > ema9 ? 'above' : 'below'} 9 EMA.`;
   const intraDetail = `${intradayTrend} bias: Price is trading ${currentPrice > sessionVwap ? 'above' : 'below'} Session VWAP (${sessionVwap.toLocaleString()}) and ${currentPrice > priorDay.close ? 'above' : 'below'} Prior Day Close (${priorDay.close.toLocaleString()}).`;
@@ -830,14 +858,25 @@ export function generateTradeSetups(
 export function generateRiskNotes(
   atr: ATRData,
   options: OptionsData,
-  symbol: TickerSymbol
+  symbol: TickerSymbol,
+  catalysts: CatalystEvent[]
 ): string[] {
   const notes: string[] = [];
 
-  // 1. Catalyst note with exact time
-  notes.push(
-    'Scheduled Catalyst Risk: US Core CPI released at 12:30 UTC (08:30 AM EST) and FOMC speech at 18:00 UTC. Expect severe spread widening ±15 minutes around release; flatten or tighten trailing stops prior to print.'
-  );
+  // 1. Genuine catalyst note with exact time
+  const highImpact = catalysts.find((c) => c.impact === 'HIGH');
+  const mediumImpact = catalysts.find((c) => c.impact === 'MEDIUM');
+  const activeEvent = highImpact || mediumImpact;
+
+  if (activeEvent && activeEvent.sourceType !== 'NO_TIER1_CONFIRMED') {
+    notes.push(
+      `Scheduled Catalyst Risk: ${activeEvent.event} at ${activeEvent.timeUTC} (${activeEvent.timeEST}). ${activeEvent.notes}`
+    );
+  } else {
+    notes.push(
+      `Macro Calendar: No Tier-1 macro releases (CPI/NFP/FOMC) confirmed for today's session. Routine session liquidity transitions govern intraday flow (London 08:00 UTC, US Cash Open 13:30 UTC).`
+    );
+  }
 
   // 2. Volatility regime & sizing
   notes.push(
@@ -849,9 +888,11 @@ export function generateRiskNotes(
   );
 
   // 3. Options market risk / gamma pin
-  if (options.isAvailable && options.maxPainStrike > 0) {
+  if (options.isAvailable && options.maxPainStrike && options.maxPainStrike > 0) {
+    const pcRatioText = options.putCallOIRatio !== undefined ? ` (P/C OI Ratio: ${options.putCallOIRatio})` : '';
+    const skewText = options.skew25d !== undefined ? ` 25-Delta Skew: ${options.skew25d > 0 ? '+' : ''}${options.skew25d}%.` : '';
     notes.push(
-      `Deribit Options Pin Risk: Nearest weekly Max Pain is anchored at $${options.maxPainStrike.toLocaleString()} with a Put/Call open interest ratio of ${options.putCallOIRatio}. Expect dealer gamma hedging to dampen breakouts approaching this strike prior to 08:00 UTC settlement.`
+      `Deribit Options Pin Risk: Nearest weekly Max Pain is anchored at $${options.maxPainStrike.toLocaleString()}${pcRatioText}.${skewText} Expect dealer gamma hedging to dampen breakouts approaching this strike prior to 08:00 UTC settlement.`
     );
   } else {
     notes.push(
@@ -884,12 +925,22 @@ export function generateDeskBrief(raw: RawMarketPayload, session: TradingSession
   const gaps = detectUntestedGaps(hourlyCandles, dailyCandles, currentPrice);
   const sessionVwapData = computeSessionVWAP(hourlyCandles, session, currentPrice);
   const preMarket = computePreMarketData(currentPrice, high24h, low24h, volume24h, change24h, change24hPercent, dailyCandles, hourlyCandles);
-  const marketStructure = deriveMarketStructure(currentPrice, priorDay, sessionVwapData.price, volumeProfile, movingAverages, symbol);
+  const marketStructure = deriveMarketStructure(
+    currentPrice,
+    priorDay,
+    sessionVwapData.price,
+    volumeProfile,
+    movingAverages,
+    symbol,
+    dailyCandles,
+    change24hPercent,
+    preMarket.volumeRatio20d
+  );
 
+  const catalysts = getScheduledCatalysts();
   const keyLevels = generateKeyLevels(priorDay, pivots, volumeProfile, sessionVwapData.price, movingAverages, fibonacci, gaps);
   const tradeSetups = generateTradeSetups(currentPrice, priorDay, pivots, volumeProfile, sessionVwapData.price, atr, marketStructure);
-  const riskNotes = generateRiskNotes(atr, options, symbol);
-  const catalysts = getScheduledCatalysts();
+  const riskNotes = generateRiskNotes(atr, options, symbol, catalysts);
 
   // Summary Bias: 1-paragraph summary bias (bullish/bearish/neutral + why, 3 sentences max)
   let summaryBiasType: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';

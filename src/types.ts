@@ -109,26 +109,29 @@ export interface UntestedGap {
 export interface OptionsData {
   isAvailable: boolean;
   unavailableReason?: string;
-  nearestExpiry: string;
-  putCallVolumeRatio: number;
-  putCallOIRatio: number;
-  ivPercentile: number;
-  atmIV: number;
-  maxPainStrike: number;
+  sourceVenue?: string; // 'Deribit Live REST v2' | 'Unlisted'
+  nearestExpiry?: string;
+  putCallVolumeRatio?: number;
+  putCallOIRatio?: number;
+  atmIV?: number;
+  realizedVol30d?: number;
+  ivHvSpread?: number;
+  maxPainStrike?: number;
   gammaClusterCalls: { strike: number; oi: number }[];
   gammaClusterPuts: { strike: number; oi: number }[];
-  skew25d: number; // e.g. +2.4% (puts over calls) or -1.8%
+  skew25d?: number;
 }
 
 export interface CatalystEvent {
   id: string;
   timeUTC: string;
   timeEST: string;
-  category: 'MACRO' | 'CENTRAL_BANK' | 'CRYPTO_SPECIFIC' | 'EARNINGS';
+  category: 'MACRO' | 'CENTRAL_BANK' | 'CRYPTO_SPECIFIC' | 'AUCTION_EVENT' | 'EARNINGS';
   event: string;
   impact: 'HIGH' | 'MEDIUM' | 'LOW';
   consensus?: string;
   previous?: string;
+  sourceType?: 'VERIFIED_CALENDAR' | 'RECURRING_AUCTION' | 'CUSTOM_DESK' | 'NO_TIER1_CONFIRMED';
   notes: string;
 }
 

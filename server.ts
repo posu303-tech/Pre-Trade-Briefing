@@ -43,7 +43,7 @@ app.get('/api/market-data', async (req, res) => {
     if (symbol === 'XAUT-USD') {
       // Bitfinex ticker & candles
       const [candleRes, tickerRes] = await Promise.all([
-        fetch('https://api-pub.bitfinex.com/v2/candles/trade:1D:tXAUT:USD/hist?limit=15'),
+        fetch('https://api-pub.bitfinex.com/v2/candles/trade:1D:tXAUT:USD/hist?limit=30'),
         fetch('https://api-pub.bitfinex.com/v2/ticker/tXAUT:USD'),
       ]);
 
@@ -58,9 +58,20 @@ app.get('/api/market-data', async (req, res) => {
       }
     }
 
-    const binancePair = symbol === 'BTC-USD' ? 'BTCUSDT' : symbol === 'ETH-USD' ? 'ETHUSDT' : symbol === 'SOL-USD' ? 'SOLUSDT' : 'PAXGUSDT';
+    const symbolMap: Record<string, string> = {
+      'BTC-USD': 'BTCUSDT',
+      'ETH-USD': 'ETHUSDT',
+      'SOL-USD': 'SOLUSDT',
+      'PAXG-USD': 'PAXGUSDT',
+    };
+
+    const binancePair = symbolMap[symbol];
+    if (!binancePair) {
+      return res.status(400).json({ error: `Unsupported symbol: ${symbol}` });
+    }
+
     const [klineRes, tickerRes, hourRes] = await Promise.all([
-      fetch(`https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1d&limit=15`),
+      fetch(`https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1d&limit=30`),
       fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binancePair}`),
       fetch(`https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1h&limit=48`),
     ]);

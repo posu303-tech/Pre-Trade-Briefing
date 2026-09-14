@@ -23,15 +23,15 @@ import { ExecutiveBriefView } from './components/ExecutiveBriefView';
 import { GeminiAnalystModal } from './components/GeminiAnalystModal';
 import { InteractiveTerminalChart } from './components/InteractiveTerminalChart';
 import { PositionRiskCalculator } from './components/PositionRiskCalculator';
-import { fetchMarketData } from './services/marketData';
+import { fetchMarketData, getFallbackPayload } from './services/marketData';
 import { generateDeskBrief } from './services/quantEngine';
 import { PreMarketBrief, TickerSymbol, TradingSession } from './types';
 
 export const App: React.FC = () => {
   const [symbol, setSymbol] = useState<TickerSymbol>('BTC-USD');
   const [session, setSession] = useState<TradingSession>('ALL');
-  const [brief, setBrief] = useState<PreMarketBrief | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [brief, setBrief] = useState<PreMarketBrief>(() => generateDeskBrief(getFallbackPayload('BTC-USD'), 'ALL'));
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'brief' | 'chart' | 'data' | 'calculator'>('brief');
   const [isGeminiOpen, setIsGeminiOpen] = useState<boolean>(false);
@@ -47,7 +47,8 @@ export const App: React.FC = () => {
       setLastUpdated(new Date());
     } catch (err: any) {
       console.error('Error generating desk brief:', err);
-      setError(err?.message || 'Failed to pull live market data from institutional feeds.');
+      setBrief((prev) => prev || generateDeskBrief(getFallbackPayload(symbol), session));
+      setError(err?.message || 'Using cached desk feed. Live market handshake timed out.');
     } finally {
       setLoading(false);
     }

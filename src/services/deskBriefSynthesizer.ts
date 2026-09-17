@@ -127,7 +127,9 @@ export async function generateClientGeminiBrief(
   brief: PreMarketBrief,
   apiKey: string
 ): Promise<string> {
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  // Key travels as a header rather than a `?key=` query param so it doesn't get
+  // written into browser history, referrer headers, or any request logs.
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
 
   const prompt = `You are a Senior Sell-Side Equity & Futures Trading Desk Analyst preparing a pre-market technical brief for institutional trading desks planning intraday trades.
 Write a crisp, authoritative pre-market technical brief for ${brief.symbol} (${brief.session} Session, Date: ${brief.date}) based on the following verified quantitative inputs:
@@ -153,7 +155,10 @@ SECTION 4: RISK & EXECUTION NOTES (Catalyst timing, ATR volatility sizing, Optio
 
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
     }),
@@ -183,11 +188,15 @@ export async function synthesizeDeskBrief(
   brief: PreMarketBrief,
   userApiKey?: string
 ): Promise<{ text: string; source: 'server' | 'gemini_client' | 'deterministic' }> {
-  // If user provided a client key, use direct client generation
-  const activeKey = userApiKey || (import.meta as any).env?.VITE_GEMINI_API_KEY;
-  if (activeKey) {
+  // If user provided a client key, use direct client generation.
+  // Deliberately NOT reading a VITE_-prefixed env var here: Vite inlines those into
+  // the public JS bundle at build time, and this app is meant to run as a static
+  // GitHub Pages site, so any key set that way would ship in plaintext to every
+  // visitor. The only client-side key path is one the user types in themselves,
+  // kept in their own browser's localStorage.
+  if (userApiKey) {
     try {
-      const text = await generateClientGeminiBrief(brief, activeKey);
+      const text = await generateClientGeminiBrief(brief, userApiKey);
       return { text, source: 'gemini_client' };
     } catch (e) {
       console.warn('Direct client Gemini call failed, trying server or deterministic fallback', e);

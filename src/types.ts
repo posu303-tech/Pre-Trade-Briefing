@@ -178,6 +178,10 @@ export interface PreMarketBrief {
   dataSource: string;
   isStale: boolean;
   stalenessNotes?: string;
+  /** Timeframes (e.g. "1H", "15m", "5m") that fell back to synthetic/cached candles
+   * even though the primary feed (daily + ticker) reported live. Empty when every
+   * timeframe used genuine exchange data. */
+  syntheticTimeframes: string[];
   currentPrice: number;
   
   // Section 1: One-paragraph summary bias (max 3 sentences)

@@ -124,6 +124,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const candleSpacing = chartWidth / candles.length;
   const candleBodyWidth = Math.max(3, candleSpacing * 0.65);
 
+  // Maximum volume across visible timeframe candles for relative volume scaling
+  const maxCandleVol = useMemo(() => {
+    return Math.max(...candles.map((c) => c.volume), 1);
+  }, [candles]);
+
   // Price Grid Lines
   const yTicks = useMemo(() => {
     const ticks: number[] = [];
@@ -616,6 +621,37 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </g>
           )}
 
+          {/* Timeframe Volume Histogram Bars at Bottom */}
+          <g className="volume-bars-layer select-none">
+            {candles.map((c, i) => {
+              const x = i * candleSpacing + candleSpacing / 2;
+              const isGreen = c.close >= c.open;
+              const isHovered = hoverCandle?.timestamp === c.timestamp;
+              const isCurrent = i === candles.length - 1;
+              const volBarMaxHeight = 45;
+              const volHeight = Math.max(2, (c.volume / maxCandleVol) * volBarMaxHeight);
+              const volBaseY = marginTop + chartHeight;
+
+              return (
+                <rect
+                  key={`vol-${c.timestamp}`}
+                  x={x - candleBodyWidth / 2}
+                  y={volBaseY - volHeight}
+                  width={candleBodyWidth}
+                  height={volHeight}
+                  fill={isGreen ? '#10b981' : '#ef4444'}
+                  opacity={isHovered ? 0.85 : isCurrent ? 0.6 : 0.22}
+                  rx={1}
+                  className="cursor-pointer transition-opacity"
+                  onMouseEnter={() => setHoverCandle(c)}
+                  onMouseLeave={() => setHoverCandle(null)}
+                >
+                  <title>{`${timeframe} Vol: ${c.volume.toLocaleString()}`}</title>
+                </rect>
+              );
+            })}
+          </g>
+
           {/* Candlesticks */}
           <g className="candles-layer">
             {candles.map((c, i) => {
@@ -808,11 +844,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             );
           })()}
 
-          {/* Real-time Spot Price Ray & Right-Axis Bar Close Countdown Badge */}
+          {/* Real-time Spot Price Ray, Right-Axis Timeframe Volume Tag, Live Price Tag & Countdown Tag */}
           {(() => {
             const yLive = priceToY(livePrice);
             const tagX = chartWidth + profileWidth + 4;
-            const clampedY = Math.min(Math.max(marginTop + 12, yLive), chartHeight - 22);
+            const clampedY = Math.min(Math.max(marginTop + 24, yLive), chartHeight - 32);
 
             const rayColor =
               priceDirection === 'up'
@@ -820,6 +856,22 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 : priceDirection === 'down'
                 ? '#ef4444'
                 : '#06b6d4';
+
+            // Selected timeframe volume: active forming candle or currently hovered candle
+            const activeCandle = candles[candles.length - 1];
+            const targetCandle = hoverCandle || activeCandle;
+            const targetVolume = targetCandle?.volume ?? 0;
+
+            const formatVol = (val: number) => {
+              if (!val || isNaN(val)) return '0';
+              if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(2)}M`;
+              if (val >= 10_000) return `${(val / 1_000).toFixed(1)}K`;
+              if (val >= 1_000) return `${(val / 1_000).toFixed(2)}K`;
+              if (val >= 100) return val.toFixed(0);
+              return val.toFixed(1);
+            };
+
+            const volumeFormatted = formatVol(targetVolume);
 
             return (
               <g className="spot-price-tracker select-none">
@@ -851,19 +903,45 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   fill={rayColor}
                 />
 
-                {/* Right Margin: Live Price Tag */}
+                {/* Right Margin: Live Price Tag & Volume Badge */}
                 <g transform={`translate(${tagX + 4}, ${clampedY - 10})`}>
+                  {/* Volume Value Tag Directly Above the Price Label (Corresponding to Selected Timeframe) */}
+                  <g className="timeframe-volume-badge">
+                    <rect
+                      x={0}
+                      y={-20}
+                      width={82}
+                      height={17}
+                      fill="#020617"
+                      stroke="#38bdf8"
+                      strokeWidth={1}
+                      rx={3}
+                    />
+                    <text
+                      x={41}
+                      y={-8}
+                      fill="#38bdf8"
+                      fontSize={8.5}
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                      letterSpacing="-0.2px"
+                    >
+                      {timeframe} Vol: {volumeFormatted}
+                    </text>
+                  </g>
+
                   {/* Live Price Tag Box */}
                   <rect
                     x={0}
                     y={0}
-                    width={78}
+                    width={82}
                     height={18}
                     fill={rayColor}
                     rx={3}
                   />
                   <text
-                    x={39}
+                    x={41}
                     y={13}
                     fill="#020617"
                     fontSize={10}
@@ -877,8 +955,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   {/* Bar Close Countdown Attached Tag */}
                   <rect
                     x={0}
-                    y={20}
-                    width={78}
+                    y={21}
+                    width={82}
                     height={16}
                     fill="#020617"
                     stroke="#f59e0b"
@@ -886,8 +964,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                     rx={3}
                   />
                   <text
-                    x={39}
-                    y={32}
+                    x={41}
+                    y={33}
                     fill="#fbbf24"
                     fontSize={9.5}
                     fontFamily="monospace"
@@ -904,8 +982,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       </div>
 
       {/* Profile Metrics Summary Card */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
-        <div className="p-2.5 bg-slate-950 rounded border border-slate-800">
+      <div className={`${isMaximized ? 'hidden sm:grid' : 'grid'} grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs`}>
+        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
           <span className="text-slate-400 text-[10px] block">POINT OF CONTROL (POC):</span>
           <span className="text-amber-400 font-bold text-sm">
             ${volumeProfile.poc.toLocaleString()}
@@ -913,7 +991,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           <span className="text-[10px] text-slate-400 block mt-0.5">Max traded volume node</span>
         </div>
 
-        <div className="p-2.5 bg-slate-950 rounded border border-slate-800">
+        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
           <span className="text-slate-400 text-[10px] block">VALUE AREA HIGH (VAH):</span>
           <span className="text-cyan-300 font-bold text-sm">
             ${volumeProfile.vah.toLocaleString()}
@@ -921,7 +999,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           <span className="text-[10px] text-slate-400 block mt-0.5">Upper 70% value cutoff</span>
         </div>
 
-        <div className="p-2.5 bg-slate-950 rounded border border-slate-800">
+        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
           <span className="text-slate-400 text-[10px] block">VALUE AREA LOW (VAL):</span>
           <span className="text-cyan-300 font-bold text-sm">
             ${volumeProfile.val.toLocaleString()}
@@ -929,7 +1007,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           <span className="text-[10px] text-slate-400 block mt-0.5">Lower 70% value cutoff</span>
         </div>
 
-        <div className="p-2.5 bg-slate-950 rounded border border-slate-800">
+        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
           <span className="text-slate-400 text-[10px] block">SESSION VWAP:</span>
           <span className="text-amber-300 font-bold text-sm">
             ${sessionVwap.price.toLocaleString()}

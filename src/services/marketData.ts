@@ -16,6 +16,10 @@ export interface RawMarketPayload {
   timestamp: string;
   isLive: boolean;
   options: OptionsData;
+  /** Timeframes that had to fall back to synthetic/cached candles even though the
+   * overall payload is otherwise live (e.g. hourly klines request failed but daily
+   * + ticker succeeded). Empty array when every timeframe is genuine. */
+  syntheticTimeframes: string[];
 }
 
 const BINANCE_PAIR_MAP: Record<TickerSymbol, string> = {
@@ -201,6 +205,7 @@ export function getFallbackPayload(symbol: TickerSymbol): RawMarketPayload {
     dataSource: 'Institutional Desk Cache (Fallback Feed)',
     timestamp: new Date().toISOString(),
     isLive: false,
+    syntheticTimeframes: ['1D', '1H', '15m', '5m'],
     options: {
       isAvailable: false,
       unavailableReason:
@@ -248,6 +253,7 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
             'https://api-pub.bitfinex.com/v2/candles/trade:1h:tXAUT:USD/hist?limit=48'
           );
           let hourlyCandles: Candle[] = [];
+          const syntheticTimeframes: string[] = [];
           if (resHourly.ok) {
             const rawH = await resHourly.json();
             hourlyCandles = [...rawH].reverse().map((c: number[]) => ({
@@ -261,7 +267,12 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
             }));
           } else {
             hourlyCandles = getFallbackCandles('XAUT-USD').hourly;
+            syntheticTimeframes.push('1H');
           }
+          // Bitfinex has no convenient 15m/5m trade candle endpoint wired up here,
+          // so these two timeframes are always synthetic on this path — flag them
+          // rather than presenting them as genuine ticks.
+          syntheticTimeframes.push('15m', '5m');
 
           const lastPrice = ticker[6];
           const dailyChange = ticker[4];
@@ -286,6 +297,7 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
             dataSource,
             timestamp,
             isLive: true,
+            syntheticTimeframes,
             options: {
               isAvailable: false,
               unavailableReason:
@@ -353,6 +365,11 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
           const fifteenMinCandles = m15Klines.length ? mapBinanceCandles(m15Klines) : fallback.fifteenMin;
           const fiveMinCandles = m5Klines.length ? mapBinanceCandles(m5Klines) : fallback.fiveMin;
           const hv30 = computeHistoricalVol30d(dailyCandles);
+          const syntheticTimeframes: string[] = [
+            ...(hKlines.length ? [] : ['1H']),
+            ...(m15Klines.length ? [] : ['15m']),
+            ...(m5Klines.length ? [] : ['5m']),
+          ];
 
           return {
             symbol: 'XAUT-USD',
@@ -369,6 +386,7 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
             dataSource,
             timestamp,
             isLive: true,
+            syntheticTimeframes,
             options: {
               isAvailable: false,
               unavailableReason:
@@ -440,6 +458,11 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
     const hourlyCandles: Candle[] = rawHourly.length ? parseKlines(rawHourly) : fallback.hourly;
     const fifteenMinCandles: Candle[] = raw15.length ? parseKlines(raw15) : fallback.fifteenMin;
     const fiveMinCandles: Candle[] = raw5.length ? parseKlines(raw5) : fallback.fiveMin;
+    const syntheticTimeframes: string[] = [
+      ...(rawHourly.length ? [] : ['1H']),
+      ...(raw15.length ? [] : ['15m']),
+      ...(raw5.length ? [] : ['5m']),
+    ];
 
     const lastSpotPrice = parseFloat(ticker.lastPrice);
     const hv30 = computeHistoricalVol30d(dailyCandles);
@@ -632,6 +655,7 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
       dataSource,
       timestamp,
       isLive: true,
+      syntheticTimeframes,
       options,
     };
   } catch (err: any) {

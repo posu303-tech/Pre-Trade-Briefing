@@ -129,7 +129,8 @@ export function useLiveTicker(
       'BTC-USD': 'btcusdt',
       'ETH-USD': 'ethusdt',
       'SOL-USD': 'solusdt',
-      'PAXG-USD': 'paxgusdt',
+      // Gold is tracked on Binance via the PAXG pair (XAUT itself isn't listed there).
+      'XAUT-USD': 'paxgusdt',
     };
 
     const streamPair = symbolMap[symbol];

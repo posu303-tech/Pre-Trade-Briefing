@@ -207,40 +207,38 @@ export function computeMovingAverages(dailyCandles: Candle[], currentPrice: numb
   const closes = dailyCandles.map(c => c.close);
   const results: MovingAverageStatus[] = [];
 
-  // Helper for SMA
-  const calcSMA = (period: number) => {
-    if (closes.length < period) {
-      const slice = closes;
-      const sum = slice.reduce((a, b) => a + b, 0);
-      return sum / slice.length;
-    }
+  // Helper for SMA. Returns null (rather than a same-value stand-in) when there
+  // isn't enough history for the requested period, so callers/UI can distinguish
+  // "genuinely insufficient data" from a real reading instead of two different
+  // periods silently collapsing to an identical averaged-over-everything number.
+  const calcSMA = (period: number): number | null => {
+    if (closes.length < period) return null;
     const slice = closes.slice(closes.length - period);
     return slice.reduce((a, b) => a + b, 0) / period;
   };
 
-  // Helper for EMA
-  const calcEMA = (period: number) => {
+  // Helper for EMA. Seeds with the SMA of the first `period` closes (standard
+  // practice) rather than the single oldest close, which otherwise biases the
+  // early values of the series and takes longer to converge on short history.
+  const calcEMA = (period: number): number | null => {
+    if (closes.length < period) return null;
     const k = 2 / (period + 1);
-    let ema = closes[0];
-    for (let i = 1; i < closes.length; i++) {
+    let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < closes.length; i++) {
       ema = closes[i] * k + ema * (1 - k);
     }
     return ema;
   };
 
-  const ema9 = calcEMA(9);
-  const ema20 = calcEMA(20);
-  const sma50 = calcSMA(50);
-  const sma200 = calcSMA(200);
-
   const list = [
-    { period: 9, type: 'EMA' as const, value: ema9 },
-    { period: 20, type: 'EMA' as const, value: ema20 },
-    { period: 50, type: 'SMA' as const, value: sma50 },
-    { period: 200, type: 'SMA' as const, value: sma200 },
+    { period: 9, type: 'EMA' as const, value: calcEMA(9) },
+    { period: 20, type: 'EMA' as const, value: calcEMA(20) },
+    { period: 50, type: 'SMA' as const, value: calcSMA(50) },
+    { period: 200, type: 'SMA' as const, value: calcSMA(200) },
   ];
 
   for (const ma of list) {
+    if (ma.value === null) continue; // not enough history yet — omit rather than fake it
     const isPriceAbove = currentPrice >= ma.value;
     const distancePercent = ((currentPrice - ma.value) / ma.value) * 100;
     results.push({
@@ -914,7 +912,7 @@ export function generateRiskNotes(
 }
 
 export function generateDeskBrief(raw: RawMarketPayload, session: TradingSession = 'ALL'): PreMarketBrief {
-  const { symbol, dailyCandles, hourlyCandles, currentPrice, high24h, low24h, volume24h, change24h, change24hPercent, dataSource, timestamp, isLive, options } = raw;
+  const { symbol, dailyCandles, hourlyCandles, currentPrice, high24h, low24h, volume24h, change24h, change24hPercent, dataSource, timestamp, isLive, options, syntheticTimeframes } = raw;
 
   const priorDay = computePriorDayStats(dailyCandles, hourlyCandles);
   const pivots = computeFloorPivots(priorDay);
@@ -963,8 +961,13 @@ export function generateDeskBrief(raw: RawMarketPayload, session: TradingSession
     date: new Date().toISOString().split('T')[0],
     timestamp,
     dataSource,
-    isStale: !isLive,
-    stalenessNotes: !isLive ? 'Data operating in cached desk fallback mode. Live REST handshake re-attempting in background.' : undefined,
+    isStale: !isLive || syntheticTimeframes.length > 0,
+    stalenessNotes: !isLive
+      ? 'Data operating in cached desk fallback mode. Live REST handshake re-attempting in background.'
+      : syntheticTimeframes.length > 0
+      ? `Primary feed is live, but ${syntheticTimeframes.join(', ')} candle(s) fell back to cached/synthetic data after an upstream request failure. Levels and setups derived from those timeframes (Session VWAP, 1H ATR, Volume Profile) should be treated as degraded until the next successful refresh.`
+      : undefined,
+    syntheticTimeframes,
     currentPrice,
     summaryBias,
     summaryBiasType,

@@ -185,7 +185,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
   const last10Candles = dailyCandles.slice(-10);
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-12 font-mono text-xs">
+    <div className="space-y-6 w-full pb-12 font-mono text-xs">
       {/* Top Header & Audit Sub-Tabs */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">

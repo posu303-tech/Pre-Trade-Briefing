@@ -70,7 +70,7 @@ export const PositionRiskCalculator: React.FC<PositionRiskCalculatorProps> = ({ 
   const target2RR = stopDistance > 0 ? (target2Distance / stopDistance).toFixed(2) : '3.50';
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-12 font-mono text-xs">
+    <div className="space-y-6 w-full pb-12 font-mono text-xs">
       {/* Header card */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">

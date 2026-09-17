@@ -82,7 +82,7 @@ export const ExecutiveBriefView: React.FC<ExecutiveBriefViewProps> = ({ brief })
   };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-12">
+    <div className="space-y-6 w-full pb-12">
       {/* Institutional Metadata Header Card */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">

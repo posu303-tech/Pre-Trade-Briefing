@@ -164,7 +164,7 @@ Notice: Analysis for planning purposes only, not a trade recommendation.`;
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 px-4 lg:px-8 py-6 max-w-7xl w-full mx-auto">
+      <main className="flex-1 px-4 lg:px-8 py-6 w-full">
         {error && (
           <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -191,7 +191,7 @@ Notice: Analysis for planning purposes only, not a trade recommendation.`;
             </p>
           </div>
         ) : brief ? (
-          <div>
+          <div className="w-full">
             {activeTab === 'brief' && <ExecutiveBriefView brief={brief} />}
             {activeTab === 'chart' && <InteractiveTerminalChart brief={brief} />}
             {activeTab === 'data' && <DataRequirementsPanel brief={brief} />}
@@ -203,7 +203,7 @@ Notice: Analysis for planning purposes only, not a trade recommendation.`;
       {/* Bottom Sticky Quick-Action Bar */}
       {brief && (
         <div className="sticky bottom-0 z-30 bg-slate-900/95 border-t border-slate-800 backdrop-blur-md px-4 lg:px-8 py-2.5">
-          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+          <div className="w-full flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
             {/* Quick Level Badges */}
             <div className="flex items-center space-x-3 overflow-x-auto py-1">
               <span className="text-slate-400 uppercase text-[10px] font-bold">Key Anchors:</span>

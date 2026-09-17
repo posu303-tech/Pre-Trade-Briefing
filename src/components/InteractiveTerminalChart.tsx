@@ -91,10 +91,10 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice]);
 
   // Dimensions: dynamically expand when maximized for broad panoramic clarity
-  const svgWidth = isMaximized ? 1400 : 960;
-  const svgHeight = isMaximized ? 620 : 440;
-  const profileWidth = showProfile ? (isMaximized ? 240 : 140) : 0;
-  const chartWidth = svgWidth - profileWidth - (isMaximized ? 100 : 90); // right y-axis margin for price & countdown tags
+  const svgWidth = isMaximized ? 1600 : 1200;
+  const svgHeight = isMaximized ? 750 : 500;
+  const profileWidth = showProfile ? (isMaximized ? 260 : 170) : 0;
+  const chartWidth = svgWidth - profileWidth - (isMaximized ? 110 : 95); // right y-axis margin for price & countdown tags
   const chartHeight = svgHeight - 40; // 40px bottom x-axis margin
   const marginTop = 20;
 
@@ -137,7 +137,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
   const containerClasses = isMaximized
     ? 'fixed inset-0 z-50 bg-slate-950/98 backdrop-blur-md p-4 sm:p-6 overflow-y-auto flex flex-col justify-start space-y-4'
-    : 'bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm max-w-6xl mx-auto space-y-4';
+    : 'bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm w-full space-y-4';
 
   return (
     <div className={containerClasses}>
@@ -382,7 +382,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           className="w-full h-auto select-none"
-          style={{ maxHeight: '520px' }}
+          style={{ maxHeight: isMaximized ? 'calc(100vh - 160px)' : '580px' }}
         >
           <defs>
             <linearGradient id="profileGradientVA" x1="0%" y1="0%" x2="100%" y2="0%">

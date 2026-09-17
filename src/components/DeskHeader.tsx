@@ -44,16 +44,18 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
   const [copied, setCopied] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState<{
     utc: string;
+    ist: string;
     ny: string;
     london: string;
     tokyo: string;
-  }>({ utc: '', ny: '', london: '', tokyo: '' });
+  }>({ utc: '', ist: '', ny: '', london: '', tokyo: '' });
 
   useEffect(() => {
     const updateClocks = () => {
       const now = new Date();
       setCurrentTime({
         utc: now.toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' UTC',
+        ist: now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' IST',
         ny: now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' NY',
         london: now.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' LDN',
         tokyo: now.toLocaleTimeString('en-US', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) + ' TKY',
@@ -104,15 +106,23 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
             <p className="text-xs text-slate-400">
               Institutional quantitative brief for intraday order flow & trade planning
             </p>
+            {/* Mobile Clocks: UTC & IST */}
+            <div className="flex md:hidden items-center gap-2 mt-1 text-[11px] font-mono">
+              <span className="text-cyan-300 font-semibold">{currentTime.utc}</span>
+              <span className="text-slate-600">•</span>
+              <span className="text-amber-300 font-medium">{currentTime.ist}</span>
+            </div>
           </div>
         </div>
 
         {/* Global Trading Clocks */}
-        <div className="hidden md:flex items-center space-x-4 text-xs font-mono text-slate-400 bg-slate-950/70 px-3 py-1.5 rounded-md border border-slate-800">
-          <div className="flex items-center space-x-1.5 text-cyan-300">
+        <div className="hidden md:flex items-center space-x-3.5 text-xs font-mono text-slate-400 bg-slate-950/70 px-3 py-1.5 rounded-md border border-slate-800">
+          <div className="flex items-center space-x-1.5 text-cyan-300 font-semibold">
             <Clock className="w-3.5 h-3.5" />
-            <span className="font-medium">{currentTime.utc}</span>
+            <span>{currentTime.utc}</span>
           </div>
+          <span className="text-slate-700">•</span>
+          <span className="text-amber-300 font-medium" title="Indian Standard Time (IST)">{currentTime.ist}</span>
           <span className="text-slate-700">•</span>
           <span>{currentTime.ny}</span>
           <span className="text-slate-700">•</span>
@@ -195,10 +205,10 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
         </div>
 
         {/* View Switcher Tabs */}
-        <div className="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
+        <div className="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800 overflow-x-auto max-w-full">
           <button
             onClick={() => setActiveTab('brief')}
-            className={`px-3 py-1 text-xs font-medium rounded transition ${
+            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
               activeTab === 'brief'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -208,7 +218,7 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('chart')}
-            className={`px-3 py-1 text-xs font-medium rounded transition ${
+            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
               activeTab === 'chart'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -218,7 +228,7 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('data')}
-            className={`px-3 py-1 text-xs font-medium rounded transition ${
+            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
               activeTab === 'data'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -228,7 +238,7 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('calculator')}
-            className={`px-3 py-1 text-xs font-medium rounded transition ${
+            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
               activeTab === 'calculator'
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
                 : 'text-slate-400 hover:text-slate-200'

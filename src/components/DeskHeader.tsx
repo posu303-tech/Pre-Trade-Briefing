@@ -1,18 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import {
   Activity,
+  AlertTriangle,
+  CheckCircle2,
   Clock,
   Copy,
   Download,
   Flame,
-  Globe2,
+  LayoutGrid,
+  Maximize2,
   RefreshCw,
-  Share2,
-  SlidersHorizontal,
-  CheckCircle2,
-  AlertTriangle,
+  Sparkles,
 } from 'lucide-react';
 import { PreMarketBrief, TickerSymbol, TradingSession } from '../types';
+
+export type WorkspaceViewMode = 'split' | 'chart' | 'brief' | 'data' | 'calculator';
 
 interface DeskHeaderProps {
   symbol: TickerSymbol;
@@ -24,8 +26,8 @@ interface DeskHeaderProps {
   onRefresh: () => void;
   onCopyBrief: (format: 'markdown' | 'text') => void;
   onPrint: () => void;
-  activeTab: 'brief' | 'chart' | 'data' | 'calculator';
-  setActiveTab: (t: 'brief' | 'chart' | 'data' | 'calculator') => void;
+  activeTab: WorkspaceViewMode;
+  setActiveTab: (t: WorkspaceViewMode) => void;
 }
 
 export const DeskHeader: React.FC<DeskHeaderProps> = ({
@@ -45,20 +47,14 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
   const [currentTime, setCurrentTime] = useState<{
     utc: string;
     ist: string;
-    ny: string;
-    london: string;
-    tokyo: string;
-  }>({ utc: '', ist: '', ny: '', london: '', tokyo: '' });
+  }>({ utc: '', ist: '' });
 
   useEffect(() => {
     const updateClocks = () => {
       const now = new Date();
       setCurrentTime({
         utc: now.toLocaleTimeString('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' UTC',
-        ist: now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' IST',
-        ny: now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' NY',
-        london: now.toLocaleTimeString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }) + ' LDN',
-        tokyo: now.toLocaleTimeString('en-US', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) + ' TKY',
+        ist: now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }) + ' IST',
       });
     };
     updateClocks();
@@ -72,200 +68,203 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
     setTimeout(() => setCopied(null), 2500);
   };
 
-  const tickers: { key: TickerSymbol; label: string; name: string }[] = [
-    { key: 'BTC-USD', label: 'BTC', name: 'Bitcoin' },
-    { key: 'ETH-USD', label: 'ETH', name: 'Ethereum' },
-    { key: 'SOL-USD', label: 'SOL', name: 'Solana' },
-    { key: 'XAUT-USD', label: 'XAUT', name: 'Tether Gold' },
+  const tickers: { key: TickerSymbol; label: string }[] = [
+    { key: 'BTC-USD', label: 'BTC' },
+    { key: 'ETH-USD', label: 'ETH' },
+    { key: 'SOL-USD', label: 'SOL' },
+    { key: 'XAUT-USD', label: 'XAUT' },
   ];
 
   const sessions: { key: TradingSession; label: string; hours: string }[] = [
-    { key: 'ALL', label: 'All Sessions (24H)', hours: '00:00 - 23:59 UTC' },
-    { key: 'ASIAN', label: 'Asian Session', hours: '00:00 - 08:00 UTC' },
-    { key: 'EUROPEAN', label: 'European (London)', hours: '08:00 - 16:00 UTC' },
-    { key: 'US', label: 'US (New York/Globex)', hours: '13:30 - 20:00 UTC' },
+    { key: 'ALL', label: '24H', hours: '00:00 - 23:59 UTC' },
+    { key: 'ASIAN', label: 'Asia', hours: '00:00 - 08:00 UTC' },
+    { key: 'EUROPEAN', label: 'LDN', hours: '08:00 - 16:00 UTC' },
+    { key: 'US', label: 'US', hours: '13:30 - 20:00 UTC' },
   ];
 
   return (
-    <header className="bg-slate-900/90 border-b border-slate-800 backdrop-blur-md sticky top-0 z-40 px-4 lg:px-8 py-3">
-      {/* Top row: Institutional Brand, World Clocks, and Status */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-800/60">
-        <div className="flex items-center space-x-3">
-          <div className="h-9 w-9 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-mono font-bold text-sm shadow-inner">
-            DESK
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-base lg:text-lg font-semibold tracking-tight text-white flex items-center gap-2">
-                Sell-Side Pre-Market Technical Brief
-                <span className="hidden sm:inline-block px-2 py-0.5 text-[11px] font-mono uppercase bg-slate-800 text-slate-300 rounded border border-slate-700">
-                  Intraday Desk
-                </span>
-              </h1>
+    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 px-3 py-2 select-none">
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        {/* Left Section: Institutional Branding, Ticker Selector & Spot Price */}
+        <div className="flex items-center flex-wrap gap-2.5">
+          {/* Desk Brand Badge */}
+          <div className="flex items-center space-x-2">
+            <div className="h-7 w-7 rounded bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 font-mono font-bold text-xs shadow-inner">
+              DESK
             </div>
-            <p className="text-xs text-slate-400">
-              Institutional quantitative brief for intraday order flow & trade planning
-            </p>
-            {/* Mobile Clocks: UTC & IST */}
-            <div className="flex md:hidden items-center gap-2 mt-1 text-[11px] font-mono">
-              <span className="text-cyan-300 font-semibold">{currentTime.utc}</span>
-              <span className="text-slate-600">•</span>
-              <span className="text-amber-300 font-medium">{currentTime.ist}</span>
-            </div>
+            <span className="font-mono font-bold text-sm text-white hidden xl:inline">
+              PRE-MARKET BRIEF
+            </span>
           </div>
-        </div>
 
-        {/* Global Trading Clocks */}
-        <div className="hidden md:flex items-center space-x-3.5 text-xs font-mono text-slate-400 bg-slate-950/70 px-3 py-1.5 rounded-md border border-slate-800">
-          <div className="flex items-center space-x-1.5 text-cyan-300 font-semibold">
-            <Clock className="w-3.5 h-3.5" />
-            <span>{currentTime.utc}</span>
+          {/* Ticker Segmented Buttons */}
+          <div className="flex items-center space-x-1 bg-slate-950 p-0.5 rounded border border-slate-800">
+            {tickers.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setSymbol(t.key)}
+                className={`px-2.5 py-1 text-xs font-mono font-bold rounded transition ${
+                  symbol === t.key
+                    ? 'bg-cyan-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
-          <span className="text-slate-700">•</span>
-          <span className="text-amber-300 font-medium" title="Indian Standard Time (IST)">{currentTime.ist}</span>
-          <span className="text-slate-700">•</span>
-          <span>{currentTime.ny}</span>
-          <span className="text-slate-700">•</span>
-          <span>{currentTime.london}</span>
-          <span className="text-slate-700">•</span>
-          <span>{currentTime.tokyo}</span>
-        </div>
 
-        {/* Feed Status & Refresh */}
-        <div className="flex items-center space-x-3 text-xs">
-          {brief?.isStale ? (
-            <div className="flex items-center space-x-1.5 px-2.5 py-1 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-full font-mono">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>Offline / Cached</span>
-            </div>
-          ) : (
-            <div className="flex items-center space-x-1.5 px-2.5 py-1 bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-full font-mono">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          {/* Live Spot Price */}
+          {brief && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950 border border-slate-800 font-mono">
+              <span className="text-[10px] text-slate-400">SPOT:</span>
+              <span className="text-xs font-bold text-white">
+                ${brief.currentPrice >= 1000
+                  ? brief.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : brief.currentPrice.toFixed(2)}
               </span>
-              <span>Live Feed: {brief?.dataSource.split(' ')[0] || 'Connected'}</span>
             </div>
           )}
 
+          {/* Session Switcher */}
+          <div className="hidden sm:flex items-center space-x-1 bg-slate-950 p-0.5 rounded border border-slate-800">
+            {sessions.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setSession(s.key)}
+                className={`px-2 py-1 text-[11px] font-mono rounded transition ${
+                  session === s.key
+                    ? 'bg-slate-700 text-cyan-300 font-bold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title={s.hours}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Center: Workspace View Selector (Pro Split, Chart, Brief, Audit, Sizer) */}
+        <div className="flex items-center space-x-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs font-mono">
+          <button
+            onClick={() => setActiveTab('split')}
+            className={`px-2.5 py-1 rounded transition flex items-center gap-1.5 ${
+              activeTab === 'split'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Split Terminal: Side-by-Side Chart & Action Deck for maximum screen utilization"
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="font-medium">Split Terminal</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('chart')}
+            className={`px-2.5 py-1 rounded transition ${
+              activeTab === 'chart'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Full-Width Panoramic Chart & Volume Profile"
+          >
+            Chart
+          </button>
+
+          <button
+            onClick={() => setActiveTab('brief')}
+            className={`px-2.5 py-1 rounded transition ${
+              activeTab === 'brief'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Executive 4-Part Mandate Briefing"
+          >
+            Brief
+          </button>
+
+          <button
+            onClick={() => setActiveTab('calculator')}
+            className={`px-2.5 py-1 rounded transition ${
+              activeTab === 'calculator'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="ATR Sizing Calculator"
+          >
+            Sizer
+          </button>
+
+          <button
+            onClick={() => setActiveTab('data')}
+            className={`px-2.5 py-1 rounded transition ${
+              activeTab === 'data'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Data Audit & Session OHLCV"
+          >
+            Audit
+          </button>
+        </div>
+
+        {/* Right Section: Clocks, Feed Status, Refresh & Export Tools */}
+        <div className="flex items-center space-x-2 text-xs font-mono">
+          {/* Clocks */}
+          <div className="hidden md:flex items-center space-x-2 bg-slate-950 px-2 py-1 rounded border border-slate-800 text-[11px] text-slate-400">
+            <Clock className="w-3 h-3 text-cyan-400" />
+            <span className="text-cyan-300 font-semibold">{currentTime.utc}</span>
+            <span className="text-slate-700">•</span>
+            <span className="text-amber-300">{currentTime.ist}</span>
+          </div>
+
+          {/* Feed Status Dot */}
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-950 border border-slate-800 text-[11px]">
+            {brief?.isStale ? (
+              <span className="flex items-center gap-1 text-amber-400">
+                <AlertTriangle className="w-3 h-3" />
+                <span className="hidden lg:inline">Cached</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="hidden lg:inline">Live</span>
+              </span>
+            )}
+          </div>
+
+          {/* Refresh Action */}
           <button
             onClick={onRefresh}
             disabled={loading}
-            className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 rounded border border-slate-700 transition disabled:opacity-50"
-            title="Refresh live price action"
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 rounded border border-slate-700 transition disabled:opacity-50"
+            title="Refresh market data feed"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
-            <span className="font-mono">Refresh</span>
           </button>
-        </div>
-      </div>
 
-      {/* Bottom row: Instrument Selector, Session Selector, Tabs, and Export Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
-        {/* Ticker Selector */}
-        <div className="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
-          <span className="text-[11px] font-mono text-slate-400 px-2 uppercase font-semibold">
-            Instrument:
-          </span>
-          {tickers.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setSymbol(t.key)}
-              className={`px-3 py-1 text-xs font-mono font-medium rounded transition flex items-center space-x-1.5 ${
-                symbol === t.key
-                  ? 'bg-cyan-600 text-white shadow-sm font-semibold'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-              }`}
-            >
-              <span>{t.label}</span>
-              <span className="text-[10px] opacity-70 hidden sm:inline">{t.name}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* Session Selector */}
-        <div className="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800">
-          <span className="text-[11px] font-mono text-slate-400 px-2 uppercase font-semibold">
-            Session:
-          </span>
-          {sessions.map((s) => (
-            <button
-              key={s.key}
-              onClick={() => setSession(s.key)}
-              className={`px-2.5 py-1 text-xs font-mono rounded transition ${
-                session === s.key
-                  ? 'bg-slate-700 text-cyan-300 font-semibold border border-cyan-500/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-              }`}
-              title={s.hours}
-            >
-              {s.label.split(' ')[0]}
-            </button>
-          ))}
-        </div>
-
-        {/* View Switcher Tabs */}
-        <div className="flex items-center space-x-1 bg-slate-950/80 p-1 rounded-lg border border-slate-800 overflow-x-auto max-w-full">
-          <button
-            onClick={() => setActiveTab('brief')}
-            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
-              activeTab === 'brief'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            1. Brief View (4-Part)
-          </button>
-          <button
-            onClick={() => setActiveTab('chart')}
-            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
-              activeTab === 'chart'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            2. Chart & Profile
-          </button>
-          <button
-            onClick={() => setActiveTab('data')}
-            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
-              activeTab === 'data'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            3. Data Audit (6 Reqs)
-          </button>
-          <button
-            onClick={() => setActiveTab('calculator')}
-            className={`px-3 py-1 text-xs font-medium rounded transition whitespace-nowrap ${
-              activeTab === 'calculator'
-                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-semibold'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            4. ATR Sizing Calculator
-          </button>
-        </div>
-
-        {/* Export & Distribution Controls */}
-        <div className="flex items-center space-x-2">
+          {/* Copy Markdown */}
           <button
             onClick={() => handleCopy('markdown')}
-            className="flex items-center space-x-1.5 px-2.5 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition"
+            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition flex items-center gap-1 text-[11px]"
             title="Copy brief formatted in Markdown for Slack, Telegram, or Notion"
           >
-            {copied === 'markdown' ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
-            <span>{copied === 'markdown' ? 'Copied MD' : 'Copy MD'}</span>
+            {copied === 'markdown' ? (
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5 text-slate-400" />
+            )}
+            <span className="hidden sm:inline">{copied === 'markdown' ? 'Copied' : 'Copy'}</span>
           </button>
 
+          {/* PDF / Print */}
           <button
             onClick={onPrint}
-            className="flex items-center space-x-1.5 px-2.5 py-1 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition"
-            title="Export desk brief to Print or PDF format"
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition"
+            title="Export desk brief to Print or PDF"
           >
             <Download className="w-3.5 h-3.5 text-slate-400" />
-            <span>PDF / Print</span>
           </button>
         </div>
       </div>

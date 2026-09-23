@@ -70,55 +70,55 @@ export const PositionRiskCalculator: React.FC<PositionRiskCalculatorProps> = ({ 
   const target2RR = stopDistance > 0 ? (target2Distance / stopDistance).toFixed(2) : '3.50';
 
   return (
-    <div className="space-y-6 w-full pb-12 font-mono text-xs">
+    <div className="space-y-3.5 w-full pb-6 font-mono text-xs">
       {/* Header card */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
           <div className="flex items-center gap-2">
-            <span className="h-6 px-2 flex items-center justify-center rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-bold">
+            <span className="h-5 px-2 flex items-center justify-center rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-[11px] font-bold">
               ATR STOP SIZING
             </span>
-            <h2 className="text-base font-semibold text-white tracking-tight font-sans">
+            <h2 className="text-sm font-semibold text-white tracking-tight font-sans">
               Intraday Stop-Sizing & Position Risk Calculator
             </h2>
           </div>
-          <span className="text-slate-400">
+          <span className="text-slate-400 text-[11px]">
             Mandate: Size Stops by 14-Period ATR
           </span>
         </div>
-        <p className="text-slate-300 font-sans text-xs md:text-sm">
+        <p className="text-slate-300 font-sans text-xs">
           Desk risk guidelines require sizing position invalidations mathematically via the 14-period execution ATR rather than arbitrary round percentage stops.
         </p>
       </div>
 
       {/* Volatility Regime & ATR Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl">
           <span className="text-slate-400 text-[10px] block">1H EXECUTION ATR (14-P):</span>
-          <span className="text-cyan-300 font-bold text-base">
+          <span className="text-cyan-300 font-bold text-sm">
             ${atr.atr14Hourly.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Execution timeframe volatility</span>
+          <span className="text-[9.5px] text-slate-400 block mt-0.5">Execution volatility</span>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl">
           <span className="text-slate-400 text-[10px] block">DAILY ATR (14-P):</span>
-          <span className="text-white font-bold text-base">
+          <span className="text-white font-bold text-sm">
             ${atr.atr14Daily.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Daily range expectation</span>
+          <span className="text-[9.5px] text-slate-400 block mt-0.5">Daily range expectation</span>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl">
           <span className="text-slate-400 text-[10px] block">20-DAY ATR RATIO:</span>
-          <span className="text-amber-300 font-bold text-base">{atr.atrRatioTo20d}x</span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Ratio vs 20-day historical ATR</span>
+          <span className="text-amber-300 font-bold text-sm">{atr.atrRatioTo20d}x</span>
+          <span className="text-[9.5px] text-slate-400 block mt-0.5">Ratio vs 20d ATR</span>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900 border border-slate-800 p-2.5 rounded-xl">
           <span className="text-slate-400 text-[10px] block">VOLATILITY REGIME:</span>
           <span
-            className={`font-bold text-base ${
+            className={`font-bold text-sm ${
               atr.volatilityRegime === 'COMPRESSED'
                 ? 'text-cyan-300'
                 : atr.volatilityRegime === 'NORMAL'
@@ -128,16 +128,16 @@ export const PositionRiskCalculator: React.FC<PositionRiskCalculatorProps> = ({ 
           >
             {atr.volatilityRegime}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">
+          <span className="text-[9.5px] text-slate-400 block mt-0.5">
             Sizing adjustment: {Math.round(volatilityFactor * 100)}%
           </span>
         </div>
       </div>
 
       {/* Main Interactive Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
         {/* Left Form: Inputs & Setup Selector (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-sm space-y-3">
           <h3 className="text-sm font-semibold text-white font-sans border-b border-slate-800 pb-2">
             Order Plan Parameters
           </h3>

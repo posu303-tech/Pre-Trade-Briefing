@@ -42,6 +42,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const [showMAs, setShowMAs] = useState(true);
   const [showGaps, setShowGaps] = useState(true);
   const [hoverCandle, setHoverCandle] = useState<Candle | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
+  const [hoverY, setHoverY] = useState<number | null>(null);
 
   // Close maximize on ESC key
   useEffect(() => {
@@ -98,23 +100,49 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const chartHeight = svgHeight - 40; // 40px bottom x-axis margin
   const marginTop = 20;
 
-  // Min / Max calculation
+  // Min / Max calculation with quantized step intervals to eliminate sub-pixel grid flickering
   const { minPrice, maxPrice } = useMemo(() => {
-    let min = Math.min(...candles.map((c) => c.low), livePrice);
-    let max = Math.max(...candles.map((c) => c.high), livePrice);
+    if (!candles.length) return { minPrice: 0, maxPrice: 100 };
+
+    let min = Math.min(...candles.map((c) => c.low));
+    let max = Math.max(...candles.map((c) => c.high));
 
     if (showPivots) {
-      min = Math.min(min, pivots.s2);
-      max = Math.max(max, pivots.r2);
+      if (pivots.s2 > 0) min = Math.min(min, pivots.s2);
+      if (pivots.r2 > 0) max = Math.max(max, pivots.r2);
     }
     if (showProfile && volumeProfile.val > 0) {
       min = Math.min(min, volumeProfile.val);
       max = Math.max(max, volumeProfile.vah);
     }
+    if (showVwap && sessionVwap.price > 0) {
+      if (sessionVwap.lower1Sigma) min = Math.min(min, sessionVwap.lower1Sigma);
+      if (sessionVwap.upper1Sigma) max = Math.max(max, sessionVwap.upper1Sigma);
+    }
 
-    const pad = (max - min) * 0.05 || livePrice * 0.02;
-    return { minPrice: min - pad, maxPrice: max + pad };
-  }, [candles, showPivots, showProfile, pivots, volumeProfile, livePrice]);
+    // Include live price
+    min = Math.min(min, livePrice);
+    max = Math.max(max, livePrice);
+
+    const range = max - min;
+    const rawPad = range > 0 ? range * 0.06 : (livePrice || 100) * 0.02;
+
+    // Step quantization: snap bounds to clean intervals so minor live fluctuations do not shift coordinate axes
+    const rawMin = min - rawPad;
+    const rawMax = max + rawPad;
+    const step =
+      range > 20000 ? 250 :
+      range > 5000 ? 50 :
+      range > 1000 ? 10 :
+      range > 200 ? 2 :
+      range > 50 ? 0.5 :
+      range > 5 ? 0.1 : 0.02;
+
+    const quantizedMin = Math.floor(rawMin / step) * step;
+    const quantizedMax = Math.ceil(rawMax / step) * step;
+
+    return { minPrice: quantizedMin, maxPrice: quantizedMax };
+  }, [candles, showPivots, showProfile, showVwap, pivots, volumeProfile, sessionVwap, livePrice]);
 
   const priceToY = (price: number) => {
     if (maxPrice <= minPrice) return chartHeight / 2;
@@ -141,8 +169,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   }, [minPrice, maxPrice]);
 
   const containerClasses = isMaximized
-    ? 'fixed inset-0 z-50 bg-slate-950/98 backdrop-blur-md p-4 sm:p-6 overflow-y-auto flex flex-col justify-start space-y-4'
-    : 'bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm w-full space-y-4';
+    ? 'fixed inset-0 z-50 bg-slate-950/98 backdrop-blur-md p-3 sm:p-5 overflow-y-auto flex flex-col justify-start space-y-3'
+    : 'bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm w-full flex flex-col space-y-2.5';
 
   return (
     <div className={containerClasses}>
@@ -621,8 +649,45 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </g>
           )}
 
+          {/* Moving Averages Overlays (Daily 9 EMA & 50 SMA) */}
+          {showMAs && movingAverages && movingAverages.length > 0 && (
+            <g className="ma-layer" pointerEvents="none">
+              {movingAverages
+                .filter((ma) => ma.period === 9 || ma.period === 50)
+                .map((ma) => {
+                  const y = priceToY(ma.value);
+                  if (y < marginTop || y > marginTop + chartHeight) return null;
+                  const color = ma.period === 9 ? '#818cf8' : '#6366f1';
+                  return (
+                    <g key={`ma-${ma.period}-${ma.type}`}>
+                      <line
+                        x1={0}
+                        y1={y}
+                        x2={chartWidth}
+                        y2={y}
+                        stroke={color}
+                        strokeWidth={1.2}
+                        strokeDasharray={ma.period === 9 ? '4 2' : '6 3'}
+                        opacity={0.85}
+                      />
+                      <text
+                        x={chartWidth - 200}
+                        y={y - 4}
+                        fill={color}
+                        fontSize={9}
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                      >
+                        {ma.type} {ma.period}: ${ma.value.toLocaleString()}
+                      </text>
+                    </g>
+                  );
+                })}
+            </g>
+          )}
+
           {/* Timeframe Volume Histogram Bars at Bottom */}
-          <g className="volume-bars-layer select-none">
+          <g className="volume-bars-layer select-none" pointerEvents="none">
             {candles.map((c, i) => {
               const x = i * candleSpacing + candleSpacing / 2;
               const isGreen = c.close >= c.open;
@@ -640,20 +705,15 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   width={candleBodyWidth}
                   height={volHeight}
                   fill={isGreen ? '#10b981' : '#ef4444'}
-                  opacity={isHovered ? 0.85 : isCurrent ? 0.6 : 0.22}
+                  opacity={isHovered ? 0.9 : isCurrent ? 0.6 : 0.25}
                   rx={1}
-                  className="cursor-pointer transition-opacity"
-                  onMouseEnter={() => setHoverCandle(c)}
-                  onMouseLeave={() => setHoverCandle(null)}
-                >
-                  <title>{`${timeframe} Vol: ${c.volume.toLocaleString()}`}</title>
-                </rect>
+                />
               );
             })}
           </g>
 
           {/* Candlesticks */}
-          <g className="candles-layer">
+          <g className="candles-layer select-none" pointerEvents="none">
             {candles.map((c, i) => {
               const x = i * candleSpacing + candleSpacing / 2;
               const yOpen = priceToY(c.open);
@@ -667,12 +727,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               const bodyHeight = Math.max(2, Math.abs(yClose - yOpen));
 
               return (
-                <g
-                  key={c.timestamp}
-                  className="cursor-pointer transition-opacity"
-                  onMouseEnter={() => setHoverCandle(c)}
-                  onMouseLeave={() => setHoverCandle(null)}
-                >
+                <g key={c.timestamp}>
                   {/* Wick */}
                   <line
                     x1={x}
@@ -794,7 +849,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             const badgeY = Math.max(marginTop + 8, topY - 26);
 
             return (
-              <g className="active-candle-hud select-none">
+              <g className="active-candle-hud select-none" pointerEvents="none">
                 {/* Dashed connector down to candle wick */}
                 <line
                   x1={lastX}
@@ -812,13 +867,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   width={96}
                   height={16}
                   fill="#020617"
-                  stroke={
-                    priceDirection === 'up'
-                      ? '#10b981'
-                      : priceDirection === 'down'
-                      ? '#ef4444'
-                      : '#06b6d4'
-                  }
+                  stroke="#0284c7"
                   strokeWidth={1.2}
                   rx={4}
                   opacity={0.95}
@@ -826,13 +875,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 <text
                   x={lastX}
                   y={badgeY + 11.5}
-                  fill={
-                    priceDirection === 'up'
-                      ? '#34d399'
-                      : priceDirection === 'down'
-                      ? '#f87171'
-                      : '#38bdf8'
-                  }
+                  fill="#38bdf8"
                   fontSize={8.5}
                   fontFamily="monospace"
                   fontWeight="bold"
@@ -850,13 +893,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             const tagX = chartWidth + profileWidth + 4;
             const clampedY = Math.min(Math.max(marginTop + 24, yLive), chartHeight - 32);
 
-            const rayColor =
-              priceDirection === 'up'
-                ? '#10b981'
-                : priceDirection === 'down'
-                ? '#ef4444'
-                : '#06b6d4';
-
             // Selected timeframe volume: active forming candle or currently hovered candle
             const activeCandle = candles[candles.length - 1];
             const targetCandle = hoverCandle || activeCandle;
@@ -872,35 +908,50 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             };
 
             const volumeFormatted = formatVol(targetVolume);
+            const priceTagBg =
+              priceDirection === 'up'
+                ? '#059669'
+                : priceDirection === 'down'
+                ? '#dc2626'
+                : '#0284c7';
 
             return (
-              <g className="spot-price-tracker select-none">
-                {/* Horizontal Ray Across Chart */}
+              <g className="spot-price-tracker select-none" pointerEvents="none">
+                {/* Horizontal Ray Across Chart - Steady calm institutional cyan */}
                 <line
                   x1={0}
                   y1={yLive}
                   x2={chartWidth + profileWidth}
                   y2={yLive}
-                  stroke={rayColor}
+                  stroke="#0284c7"
                   strokeWidth={1.5}
-                  strokeDasharray="3 2"
+                  strokeDasharray="4 2"
+                  opacity={0.85}
                 />
 
-                {/* Intersection Pulse Dot on Last Active Bar */}
+                {/* Stable Beacon Dot on Last Active Bar - Clean SVG dual ring without animate-ping glitch */}
                 {candles.length > 0 && (
-                  <circle
-                    cx={(candles.length - 1) * candleSpacing + candleSpacing / 2}
-                    cy={yLive}
-                    r={3.5}
-                    fill={rayColor}
-                    className="animate-ping opacity-75"
-                  />
+                  <g>
+                    <circle
+                      cx={(candles.length - 1) * candleSpacing + candleSpacing / 2}
+                      cy={yLive}
+                      r={6}
+                      fill="#38bdf8"
+                      fillOpacity={0.25}
+                    />
+                    <circle
+                      cx={(candles.length - 1) * candleSpacing + candleSpacing / 2}
+                      cy={yLive}
+                      r={3}
+                      fill="#38bdf8"
+                    />
+                  </g>
                 )}
 
                 {/* Pointer Arrow on Right Margin */}
                 <polygon
                   points={`${tagX},${yLive} ${tagX + 4},${yLive - 3} ${tagX + 4},${yLive + 3}`}
-                  fill={rayColor}
+                  fill={priceTagBg}
                 />
 
                 {/* Right Margin: Live Price Tag & Volume Badge */}
@@ -937,13 +988,13 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                     y={0}
                     width={82}
                     height={18}
-                    fill={rayColor}
+                    fill={priceTagBg}
                     rx={3}
                   />
                   <text
                     x={41}
                     y={13}
-                    fill="#020617"
+                    fill="#ffffff"
                     fontSize={10}
                     fontFamily="monospace"
                     fontWeight="bold"
@@ -978,41 +1029,97 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               </g>
             );
           })()}
+
+          {/* Subtle Crosshairs when Hovering */}
+          {hoverX !== null && (
+            <g className="crosshair-layer" pointerEvents="none">
+              <line
+                x1={hoverX}
+                y1={marginTop}
+                x2={hoverX}
+                y2={marginTop + chartHeight}
+                stroke="#475569"
+                strokeWidth={1}
+                strokeDasharray="2 2"
+                opacity={0.7}
+              />
+              {hoverY !== null && (
+                <line
+                  x1={0}
+                  y1={hoverY}
+                  x2={chartWidth + profileWidth}
+                  y2={hoverY}
+                  stroke="#475569"
+                  strokeWidth={1}
+                  strokeDasharray="2 2"
+                  opacity={0.7}
+                />
+              )}
+            </g>
+          )}
+
+          {/* Interactive Mouse Tracking Layer - Smooth hover without gap flickering */}
+          <rect
+            x={0}
+            y={marginTop}
+            width={chartWidth}
+            height={chartHeight}
+            fill="transparent"
+            className="cursor-crosshair"
+            onMouseMove={(e) => {
+              const svgEl = e.currentTarget.ownerSVGElement;
+              if (!svgEl) return;
+              const pt = svgEl.createSVGPoint();
+              pt.x = e.clientX;
+              pt.y = e.clientY;
+              const ctm = svgEl.getScreenCTM();
+              if (!ctm) return;
+              const svgPt = pt.matrixTransform(ctm.inverse());
+
+              if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
+                const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
+                setHoverCandle(candles[idx]);
+                setHoverX(idx * candleSpacing + candleSpacing / 2);
+                setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+              }
+            }}
+            onMouseLeave={() => {
+              setHoverCandle(null);
+              setHoverX(null);
+              setHoverY(null);
+            }}
+          />
         </svg>
       </div>
 
-      {/* Profile Metrics Summary Card */}
-      <div className={`${isMaximized ? 'hidden sm:grid' : 'grid'} grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs`}>
-        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[10px] block">POINT OF CONTROL (POC):</span>
-          <span className="text-amber-400 font-bold text-sm">
+      {/* Profile Metrics Summary Card - Compact */}
+      <div className={`${isMaximized ? 'hidden sm:grid' : 'grid'} grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-xs`}>
+        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+          <span className="text-slate-400 text-[9.5px] block">POC (MAX VOL):</span>
+          <span className="text-amber-400 font-bold text-xs">
             ${volumeProfile.poc.toLocaleString()}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Max traded volume node</span>
         </div>
 
-        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[10px] block">VALUE AREA HIGH (VAH):</span>
-          <span className="text-cyan-300 font-bold text-sm">
+        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+          <span className="text-slate-400 text-[9.5px] block">VAH (VALUE HIGH):</span>
+          <span className="text-cyan-300 font-bold text-xs">
             ${volumeProfile.vah.toLocaleString()}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Upper 70% value cutoff</span>
         </div>
 
-        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[10px] block">VALUE AREA LOW (VAL):</span>
-          <span className="text-cyan-300 font-bold text-sm">
+        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+          <span className="text-slate-400 text-[9.5px] block">VAL (VALUE LOW):</span>
+          <span className="text-cyan-300 font-bold text-xs">
             ${volumeProfile.val.toLocaleString()}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Lower 70% value cutoff</span>
         </div>
 
-        <div className={`p-2.5 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[10px] block">SESSION VWAP:</span>
-          <span className="text-amber-300 font-bold text-sm">
+        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+          <span className="text-slate-400 text-[9.5px] block">SESSION VWAP:</span>
+          <span className="text-amber-300 font-bold text-xs">
             ${sessionVwap.price.toLocaleString()}
           </span>
-          <span className="text-[10px] text-slate-400 block mt-0.5">±1σ: ${sessionVwap.lower1Sigma.toLocaleString()} - ${sessionVwap.upper1Sigma.toLocaleString()}</span>
         </div>
       </div>
     </div>

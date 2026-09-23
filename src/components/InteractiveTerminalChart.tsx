@@ -164,6 +164,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       ? maximizedOrientation === 'portrait'
       : maximizedOrientation === 'portrait' && isDevicePortrait);
 
+  // Active on mobile screen or portrait mode for crisp readable typography
+  const isMobileView = isPortraitMode || isMobileDevice;
+
   // Close maximize on ESC key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -264,10 +267,10 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     ? 750
     : 500;
 
-  const profileWidth = showProfile ? (isPortraitMode ? 85 : isMaximized ? 260 : 170) : 0;
-  const rightMargin = isPortraitMode ? 78 : (isMaximized ? 116 : 100);
+  const profileWidth = showProfile ? (isPortraitMode ? 92 : isMaximized ? 260 : 170) : 0;
+  const rightMargin = isPortraitMode ? 98 : (isMaximized ? 124 : 108);
   const chartWidth = svgWidth - profileWidth - rightMargin;
-  const chartHeight = svgHeight - (isPortraitMode ? 52 : 56);
+  const chartHeight = svgHeight - (isPortraitMode ? 54 : 56);
   const marginTop = isPortraitMode ? 16 : 20;
 
   // Min / Max calculation with quantized step intervals and vertical pricePanOffset
@@ -343,6 +346,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     return ticks;
   }, [minPrice, maxPrice]);
 
+  // Minimum vertical spacing between labels to avoid overlaps with larger crisp badges
+  const labelMinGap = isMobileView ? 30 : 27;
+
   // Floor Pivots Labels with guaranteed collision resolution (never overlap)
   const pivotLabels: PositionedLabel[] = useMemo(() => {
     if (!showPivots) return [];
@@ -354,8 +360,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       { id: 's2', text: `S2: $${pivots.s2.toLocaleString()}`, nominalY: priceToY(pivots.s2), y: 0, color: '#059669' },
     ].filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
 
-    return resolveCollisions(list, marginTop + 14, marginTop + chartHeight - 14, 25);
-  }, [showPivots, pivots, priceToY, marginTop, chartHeight]);
+    return resolveCollisions(list, marginTop + 16, marginTop + chartHeight - 16, labelMinGap);
+  }, [showPivots, pivots, priceToY, marginTop, chartHeight, labelMinGap]);
 
   // Moving Average Labels with guaranteed collision resolution
   const maLabels: PositionedLabel[] = useMemo(() => {
@@ -371,8 +377,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       }))
       .filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
 
-    return resolveCollisions(list, marginTop + 14, marginTop + chartHeight - 14, 25);
-  }, [showMAs, movingAverages, priceToY, marginTop, chartHeight]);
+    return resolveCollisions(list, marginTop + 16, marginTop + chartHeight - 16, labelMinGap);
+  }, [showMAs, movingAverages, priceToY, marginTop, chartHeight, labelMinGap]);
 
   // Left-Side Overlay Labels (Session VWAP & Bands) with guaranteed collision resolution
   const leftLabels: PositionedLabel[] = useMemo(() => {
@@ -405,8 +411,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       }
     }
     const filtered = list.filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
-    return resolveCollisions(filtered, marginTop + 14, marginTop + chartHeight - 14, 25);
-  }, [showVwap, sessionVwap, priceToY, marginTop, chartHeight]);
+    return resolveCollisions(filtered, marginTop + 16, marginTop + chartHeight - 16, labelMinGap);
+  }, [showVwap, sessionVwap, priceToY, marginTop, chartHeight, labelMinGap]);
 
   // Volume Profile Level Labels with guaranteed collision resolution
   const profileLabels: PositionedLabel[] = useMemo(() => {
@@ -417,8 +423,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       { id: 'val', text: `VAL: $${volumeProfile.val.toLocaleString()}`, nominalY: priceToY(volumeProfile.val), y: 0, color: '#38bdf8' },
     ].filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
 
-    return resolveCollisions(list, marginTop + 14, marginTop + chartHeight - 14, 25);
-  }, [showProfile, volumeProfile, priceToY, marginTop, chartHeight]);
+    return resolveCollisions(list, marginTop + 16, marginTop + chartHeight - 16, labelMinGap);
+  }, [showProfile, volumeProfile, priceToY, marginTop, chartHeight, labelMinGap]);
 
   const containerClasses = isMaximized
     ? 'fixed inset-0 z-50 bg-slate-950 flex flex-col justify-between h-[100dvh] w-screen overflow-hidden p-2 sm:p-3 select-none'
@@ -727,10 +733,15 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       >
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+          textRendering="geometricPrecision"
+          shapeRendering="geometricPrecision"
           className={`w-full ${isMaximized ? 'h-full object-contain' : 'h-auto'} select-none`}
           style={{ maxHeight: isMaximized ? '100%' : '580px' }}
         >
           <defs>
+            <filter id="badgeShadow" x="-10%" y="-10%" width="120%" height="120%">
+              <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#000000" floodOpacity="0.85" />
+            </filter>
             <linearGradient id="profileGradientVA" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="#0284c7" stopOpacity="0.45" />
               <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.1" />
@@ -763,13 +774,13 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   strokeDasharray="3 3"
                   strokeWidth={1}
                 />
-                {/* Price labels on right margin - enlarged for high readability */}
+                {/* Price labels on right margin - crisp, enlarged and high contrast for mobile devices */}
                 <text
                   x={chartWidth + profileWidth + 8}
-                  y={y + 4}
-                  fill="#94a3b8"
-                  fontSize={isPortraitMode ? 10.5 : 11.5}
-                  fontFamily="monospace"
+                  y={y + 4.5}
+                  fill="#cbd5e1"
+                  fontSize={isMobileView ? 13 : 12}
+                  fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                   fontWeight="bold"
                 >
                   ${price >= 1000 ? Math.round(price).toLocaleString() : price.toFixed(2)}
@@ -801,20 +812,21 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   <rect
                     x={10}
                     y={Math.min(yHigh, yLow) + 2}
-                    width={isPortraitMode ? 170 : 210}
-                    height={18}
+                    width={isMobileView ? 200 : 225}
+                    height={22}
                     fill="#020617"
                     stroke={isBull ? '#10b981' : '#ef4444'}
-                    strokeWidth={0.8}
-                    rx={3}
-                    opacity={0.92}
+                    strokeWidth={1.2}
+                    rx={4}
+                    opacity={0.96}
+                    filter="url(#badgeShadow)"
                   />
                   <text
-                    x={14}
-                    y={Math.min(yHigh, yLow) + 14}
+                    x={16}
+                    y={Math.min(yHigh, yLow) + 16.5}
                     fill={isBull ? '#34d399' : '#f87171'}
-                    fontSize={isPortraitMode ? 9.5 : 11}
-                    fontFamily="monospace"
+                    fontSize={isMobileView ? 12 : 11.5}
+                    fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                     fontWeight="bold"
                   >
                     Untested {gap.type.replace('_', ' ')} (${gap.lowPrice} - ${gap.highPrice})
@@ -875,10 +887,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {/* Anti-Overlap Resolved Floor Pivot Badges */}
               {pivotLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
-                const badgeWidth = isPortraitMode ? 108 : 128;
+                const badgeWidth = isMobileView ? 128 : 138;
+                const badgeHeight = isMobileView ? 26 : 24;
                 const badgeX = chartWidth - badgeWidth - 4;
                 return (
-                  <g key={lbl.id} className="pivot-label-badge" pointerEvents="none">
+                  <g key={lbl.id} className="pivot-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
                     {isShifted && (
                       <line
                         x1={chartWidth - 2}
@@ -886,27 +899,27 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={chartWidth - 6}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={1.2}
+                        strokeWidth={1.5}
                         strokeDasharray="2 2"
                       />
                     )}
                     <rect
                       x={badgeX}
-                      y={lbl.y - 11}
+                      y={lbl.y - badgeHeight / 2}
                       width={badgeWidth}
-                      height={22}
+                      height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={1.2}
+                      strokeWidth={1.5}
                       rx={4}
-                      opacity={0.96}
+                      opacity={0.98}
                     />
                     <text
                       x={badgeX + badgeWidth - 8}
                       y={lbl.y + 4.5}
                       fill={lbl.color}
-                      fontSize={isPortraitMode ? 11 : 12}
-                      fontFamily="monospace"
+                      fontSize={isMobileView ? 13 : 12.5}
+                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                       fontWeight="bold"
                       textAnchor="end"
                     >
@@ -953,10 +966,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {/* Anti-Overlap Resolved Left-Side VWAP Badges */}
               {leftLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
-                const badgeWidth = isPortraitMode ? 142 : 180;
+                const badgeWidth = isMobileView ? 174 : 196;
+                const badgeHeight = isMobileView ? 26 : 24;
                 const badgeX = 8;
                 return (
-                  <g key={lbl.id} className="vwap-label-badge" pointerEvents="none">
+                  <g key={lbl.id} className="vwap-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
                     {isShifted && (
                       <line
                         x1={badgeX + badgeWidth}
@@ -964,27 +978,27 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={badgeX + badgeWidth + 6}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={1.2}
+                        strokeWidth={1.5}
                         strokeDasharray="2 2"
                       />
                     )}
                     <rect
                       x={badgeX}
-                      y={lbl.y - 11}
+                      y={lbl.y - badgeHeight / 2}
                       width={badgeWidth}
-                      height={22}
+                      height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={1.2}
+                      strokeWidth={1.5}
                       rx={4}
-                      opacity={0.96}
+                      opacity={0.98}
                     />
                     <text
                       x={badgeX + 8}
                       y={lbl.y + 4.5}
                       fill={lbl.color}
-                      fontSize={isPortraitMode ? 11 : 12}
-                      fontFamily="monospace"
+                      fontSize={isMobileView ? 13 : 12.5}
+                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                       fontWeight="bold"
                       textAnchor="start"
                     >
@@ -1023,10 +1037,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {/* Anti-Overlap Resolved MA Badges in Dedicated Column to Left of Pivots */}
               {maLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
-                const badgeWidth = isPortraitMode ? 116 : 142;
-                const badgeX = chartWidth - (isPortraitMode ? 120 : 148) - badgeWidth;
+                const badgeWidth = isMobileView ? 138 : 150;
+                const badgeHeight = isMobileView ? 26 : 24;
+                const badgeX = chartWidth - (isMobileView ? 134 : 152) - badgeWidth;
                 return (
-                  <g key={lbl.id} className="ma-label-badge" pointerEvents="none">
+                  <g key={lbl.id} className="ma-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
                     {isShifted && (
                       <line
                         x1={badgeX + badgeWidth}
@@ -1034,27 +1049,27 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={badgeX + badgeWidth + 6}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={1.2}
+                        strokeWidth={1.5}
                         strokeDasharray="2 2"
                       />
                     )}
                     <rect
                       x={badgeX}
-                      y={lbl.y - 11}
+                      y={lbl.y - badgeHeight / 2}
                       width={badgeWidth}
-                      height={22}
+                      height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={1.2}
+                      strokeWidth={1.5}
                       rx={4}
-                      opacity={0.96}
+                      opacity={0.98}
                     />
                     <text
                       x={badgeX + badgeWidth - 8}
                       y={lbl.y + 4.5}
                       fill={lbl.color}
-                      fontSize={isPortraitMode ? 10.5 : 11.5}
-                      fontFamily="monospace"
+                      fontSize={isMobileView ? 12.5 : 12}
+                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                       fontWeight="bold"
                       textAnchor="end"
                     >
@@ -1110,16 +1125,17 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                     x1={x}
                     y1={marginTop + chartHeight}
                     x2={x}
-                    y2={marginTop + chartHeight + 4}
-                    stroke="#475569"
-                    strokeWidth={1}
+                    y2={marginTop + chartHeight + 5}
+                    stroke="#64748b"
+                    strokeWidth={1.2}
+                    shapeRendering="crispEdges"
                   />
                   <text
                     x={x}
-                    y={marginTop + chartHeight + 17}
-                    fill="#94a3b8"
-                    fontSize={isPortraitMode ? 10 : 11}
-                    fontFamily="monospace"
+                    y={marginTop + chartHeight + 19}
+                    fill="#f1f5f9"
+                    fontSize={isMobileView ? 12 : 11}
+                    fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                     fontWeight="bold"
                     textAnchor="middle"
                   >
@@ -1248,10 +1264,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {/* Anti-Overlap Resolved Volume Profile Level Labels */}
               {profileLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
-                const badgeWidth = isPortraitMode ? 82 : 116;
-                const badgeX = 6;
+                const badgeWidth = isMobileView ? 96 : 120;
+                const badgeHeight = isMobileView ? 24 : 22;
+                const badgeX = 5;
                 return (
-                  <g key={lbl.id} className="profile-label-badge" pointerEvents="none">
+                  <g key={lbl.id} className="profile-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
                     {isShifted && (
                       <line
                         x1={0}
@@ -1259,27 +1276,27 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={badgeX}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={1}
+                        strokeWidth={1.2}
                         strokeDasharray="2 2"
                       />
                     )}
                     <rect
                       x={badgeX}
-                      y={lbl.y - 10}
+                      y={lbl.y - badgeHeight / 2}
                       width={badgeWidth}
-                      height={20}
+                      height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={1}
-                      rx={3}
-                      opacity={0.96}
+                      strokeWidth={1.4}
+                      rx={3.5}
+                      opacity={0.98}
                     />
                     <text
                       x={badgeX + 6}
                       y={lbl.y + 4.5}
                       fill={lbl.color}
-                      fontSize={isPortraitMode ? 10.5 : 11.5}
-                      fontFamily="monospace"
+                      fontSize={isMobileView ? 12.5 : 12}
+                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                       fontWeight="bold"
                       textAnchor="start"
                     >
@@ -1297,38 +1314,39 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             const lastX = lastIndex * candleSpacing + candleSpacing / 2;
             const lastCandle = candles[lastIndex];
             const topY = priceToY(Math.max(lastCandle.high, livePrice));
-            const badgeY = Math.max(marginTop + 8, topY - 26);
+            const badgeY = Math.max(marginTop + 8, topY - 28);
+            const hudWidth = isMobileView ? 128 : 118;
 
             return (
-              <g className="active-candle-hud select-none" pointerEvents="none">
+              <g className="active-candle-hud select-none" pointerEvents="none" filter="url(#badgeShadow)">
                 {/* Dashed connector down to candle wick */}
                 <line
                   x1={lastX}
-                  y1={badgeY + 14}
+                  y1={badgeY + 16}
                   x2={lastX}
                   y2={topY}
                   stroke="#475569"
-                  strokeWidth={1}
+                  strokeWidth={1.2}
                   strokeDasharray="2 2"
                 />
                 {/* Floating pill background */}
                 <rect
-                  x={lastX - 52}
+                  x={lastX - hudWidth / 2}
                   y={badgeY}
-                  width={104}
-                  height={18}
+                  width={hudWidth}
+                  height={22}
                   fill="#020617"
                   stroke="#0284c7"
-                  strokeWidth={1.2}
-                  rx={4}
-                  opacity={0.96}
+                  strokeWidth={1.5}
+                  rx={5}
+                  opacity={0.98}
                 />
                 <text
                   x={lastX}
-                  y={badgeY + 12.5}
+                  y={badgeY + 15}
                   fill="#38bdf8"
-                  fontSize={isPortraitMode ? 9.5 : 10.5}
-                  fontFamily="monospace"
+                  fontSize={isMobileView ? 12 : 11}
+                  fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                   fontWeight="bold"
                   textAnchor="middle"
                 >
@@ -1408,49 +1426,51 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 {/* Right Margin: Live Price Tag & Volume Badge */}
                 <g transform={`translate(${tagX + 4}, ${clampedY - 10})`}>
                   {/* Volume Value Tag Directly Above Price Label */}
-                  <g className="timeframe-volume-badge">
-                    <rect
-                      x={0}
-                      y={-22}
-                      width={isPortraitMode ? 72 : 88}
-                      height={19}
-                      fill="#020617"
-                      stroke="#38bdf8"
-                      strokeWidth={1}
-                      rx={3}
-                    />
-                    <text
-                      x={(isPortraitMode ? 72 : 88) / 2}
-                      y={-9}
-                      fill="#38bdf8"
-                      fontSize={isPortraitMode ? 9 : 10.5}
-                      fontFamily="monospace"
-                      fontWeight="bold"
-                      textAnchor="middle"
-                    >
-                      {timeframe} Vol: {volumeFormatted}
-                    </text>
-                  </g>
-
-                  {/* Live Price Tag Box */}
                   {(() => {
-                    const tagWidth = isPortraitMode ? 72 : 88;
+                    const tagWidth = isMobileView ? 88 : 96;
+                    const tagHeight = isMobileView ? 26 : 24;
+
                     return (
                       <>
+                        <g className="timeframe-volume-badge">
+                          <rect
+                            x={0}
+                            y={-25}
+                            width={tagWidth}
+                            height={22}
+                            fill="#020617"
+                            stroke="#38bdf8"
+                            strokeWidth={1.2}
+                            rx={3.5}
+                          />
+                          <text
+                            x={tagWidth / 2}
+                            y={-10}
+                            fill="#38bdf8"
+                            fontSize={isMobileView ? 11.5 : 11}
+                            fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+                            fontWeight="bold"
+                            textAnchor="middle"
+                          >
+                            {timeframe} Vol: {volumeFormatted}
+                          </text>
+                        </g>
+
+                        {/* Live Price Tag Box */}
                         <rect
                           x={0}
                           y={0}
                           width={tagWidth}
-                          height={20}
+                          height={tagHeight}
                           fill={priceTagBg}
-                          rx={3}
+                          rx={4}
                         />
                         <text
                           x={tagWidth / 2}
-                          y={14.5}
+                          y={tagHeight / 2 + 5}
                           fill="#ffffff"
-                          fontSize={isPortraitMode ? 9.5 : 11.5}
-                          fontFamily="monospace"
+                          fontSize={isMobileView ? 13.5 : 12.5}
+                          fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                           fontWeight="bold"
                           textAnchor="middle"
                         >
@@ -1460,20 +1480,20 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         {/* Bar Close Countdown Attached Tag */}
                         <rect
                           x={0}
-                          y={23}
+                          y={tagHeight + 3}
                           width={tagWidth}
-                          height={18}
+                          height={22}
                           fill="#020617"
                           stroke="#f59e0b"
-                          strokeWidth={1}
-                          rx={3}
+                          strokeWidth={1.2}
+                          rx={3.5}
                         />
                         <text
                           x={tagWidth / 2}
-                          y={36}
+                          y={tagHeight + 17.5}
                           fill="#fbbf24"
-                          fontSize={isPortraitMode ? 9 : 10.5}
-                          fontFamily="monospace"
+                          fontSize={isMobileView ? 11.5 : 11}
+                          fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                           fontWeight="bold"
                           textAnchor="middle"
                         >
@@ -1673,7 +1693,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
       {/* Profile Metrics Summary Bar - Adaptive for Mobile Portrait */}
       {isMaximized && isPortraitMode ? (
-        <div className="flex items-center justify-between px-2.5 py-1 bg-slate-950 rounded border border-slate-800 text-[10px] font-mono text-slate-300 shrink-0">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-slate-950 rounded border border-slate-800 text-xs font-mono text-slate-300 shrink-0">
           <div>POC: <span className="text-amber-400 font-bold">${volumeProfile.poc.toLocaleString()}</span></div>
           <div>VAH: <span className="text-cyan-300 font-bold">${volumeProfile.vah.toLocaleString()}</span></div>
           <div>VAL: <span className="text-cyan-300 font-bold">${volumeProfile.val.toLocaleString()}</span></div>

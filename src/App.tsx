@@ -23,6 +23,7 @@ import { ExecutiveBriefView } from './components/ExecutiveBriefView';
 import { GeminiAnalystModal } from './components/GeminiAnalystModal';
 import { InteractiveTerminalChart } from './components/InteractiveTerminalChart';
 import { PositionRiskCalculator } from './components/PositionRiskCalculator';
+import { AtrVolatilityMonitor } from './components/AtrVolatilityMonitor';
 import { fetchMarketData, getFallbackPayload } from './services/marketData';
 import { generateDeskBrief } from './services/quantEngine';
 import { PreMarketBrief, TickerSymbol, TradingSession } from './types';
@@ -204,21 +205,21 @@ Notice: Analysis for planning purposes only, not a trade recommendation.`;
       {brief && (
         <div className="sticky bottom-0 z-30 bg-slate-900/95 border-t border-slate-800 backdrop-blur-md px-4 lg:px-8 py-2.5">
           <div className="w-full flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-            {/* Quick Level Badges */}
-            <div className="flex items-center space-x-3 overflow-x-auto py-1">
-              <span className="text-slate-400 uppercase text-[10px] font-bold">Key Anchors:</span>
-              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200">
+            {/* Quick Level Badges & Volatility Monitor */}
+            <div className="flex items-center space-x-2.5 overflow-x-auto py-1 max-w-full">
+              <span className="text-slate-400 uppercase text-[10px] font-bold shrink-0">Key Anchors:</span>
+              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200 shrink-0">
                 P: <strong className="text-purple-300">${brief.pivots.pivot.toFixed(2)}</strong>
               </span>
-              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200">
+              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200 shrink-0">
                 POC: <strong className="text-amber-300">${brief.volumeProfile.poc.toFixed(2)}</strong>
               </span>
-              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200">
+              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200 shrink-0">
                 VWAP: <strong className="text-amber-400">${brief.sessionVwap.price.toFixed(2)}</strong>
               </span>
-              <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-200">
-                1H ATR: <strong className="text-cyan-300">${brief.atr.atr14Hourly.toFixed(2)}</strong>
-              </span>
+              <div className="shrink-0">
+                <AtrVolatilityMonitor brief={brief} />
+              </div>
             </div>
 
             {/* AI Assistant Button */}

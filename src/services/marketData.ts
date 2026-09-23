@@ -50,11 +50,11 @@ function getFallbackCandles(symbol: TickerSymbol): {
   const fifteenMs = 15 * 60 * 1000;
   const fiveMs = 5 * 60 * 1000;
 
-  // Generate 30 completed daily candles for genuine 20-day moving average volume
+  // Generate 60 completed daily candles for genuine moving average volume and historical context
   const daily: Candle[] = [];
   let prevClose = basePrice * 0.94;
 
-  for (let i = 29; i >= 0; i--) {
+  for (let i = 59; i >= 0; i--) {
     const time = now - i * dayMs;
     const vol =
       (basePrice > 10000 ? 12000 : 80000) * (0.85 + Math.sin(i * 0.4) * 0.25);
@@ -79,7 +79,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   const hourly: Candle[] = [];
   let hClose = daily[daily.length - 2].close;
-  for (let h = 48; h >= 0; h--) {
+  for (let h = 80; h >= 0; h--) {
     const time = now - h * hourMs;
     const hRange = hClose * 0.007;
     const open = hClose;
@@ -103,7 +103,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   const fifteenMin: Candle[] = [];
   let m15Close = hourly[hourly.length - 1].close;
-  for (let m = 48; m >= 0; m--) {
+  for (let m = 80; m >= 0; m--) {
     const time = now - m * fifteenMs;
     const mRange = m15Close * 0.0035;
     const open = m15Close;
@@ -127,7 +127,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   const fiveMin: Candle[] = [];
   let m5Close = fifteenMin[fifteenMin.length - 1].close;
-  for (let m = 48; m >= 0; m--) {
+  for (let m = 80; m >= 0; m--) {
     const time = now - m * fiveMs;
     const mRange = m5Close * 0.002;
     const open = m5Close;

@@ -1,24 +1,81 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart2,
   Clock,
   Eye,
   EyeOff,
+  Hand,
   Layers,
   Maximize2,
   Minimize2,
+  Move,
   RotateCcw,
   Sliders,
   Smartphone,
   TrendingUp,
   X,
   Zap,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
 import { useLiveTicker } from '../services/useLiveTicker';
 
 interface InteractiveTerminalChartProps {
   brief: PreMarketBrief;
+}
+
+interface PositionedLabel {
+  id: string;
+  nominalY: number;
+  y: number;
+  text: string;
+  color: string;
+  borderColor?: string;
+  bgColor?: string;
+}
+
+// Anti-Collision Relaxation: Guarantees labels never overlap by pushing adjacent labels apart
+function resolveCollisions(
+  labels: PositionedLabel[],
+  minY: number,
+  maxY: number,
+  minGap = 24
+): PositionedLabel[] {
+  if (labels.length === 0) return [];
+  if (labels.length === 1) {
+    return [{ ...labels[0], y: Math.max(minY, Math.min(maxY, labels[0].nominalY)) }];
+  }
+
+  // Clone and sort by nominal Y
+  const sorted = labels.map((l) => ({
+    ...l,
+    y: Math.max(minY, Math.min(maxY, l.nominalY)),
+  })).sort((a, b) => a.nominalY - b.nominalY);
+
+  // Pass 1: push down
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].y < sorted[i - 1].y + minGap) {
+      sorted[i].y = sorted[i - 1].y + minGap;
+    }
+  }
+
+  // Pass 2: push up if exceeding maxY
+  if (sorted[sorted.length - 1].y > maxY) {
+    sorted[sorted.length - 1].y = maxY;
+    for (let i = sorted.length - 2; i >= 0; i--) {
+      if (sorted[i].y > sorted[i + 1].y - minGap) {
+        sorted[i].y = sorted[i + 1].y - minGap;
+      }
+    }
+  }
+
+  // Pass 3: ensure none above minY
+  for (let i = 0; i < sorted.length; i++) {
+    sorted[i].y = Math.max(minY, Math.min(maxY, sorted[i].y));
+  }
+
+  return sorted;
 }
 
 export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> = ({ brief }) => {
@@ -46,6 +103,29 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const [hoverCandle, setHoverCandle] = useState<Candle | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [hoverY, setHoverY] = useState<number | null>(null);
+
+  // Zoom & Pan state
+  const [zoom, setZoom] = useState<number>(1.0); // 0.4x (wide context) to 3.0x (detailed magnification)
+  const [panOffset, setPanOffset] = useState<number>(0); // number of historical candles panned back
+  const [pricePanOffset, setPricePanOffset] = useState<number>(0); // vertical dollar offset
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragMoved, setDragMoved] = useState<boolean>(false);
+
+  const svgContainerRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{
+    x: number;
+    y: number;
+    initialPan: number;
+    initialPricePan: number;
+  }>({ x: 0, y: 0, initialPan: 0, initialPricePan: 0 });
+  const touchDistRef = useRef<number | null>(null);
+  const isDraggingRef = useRef<boolean>(false);
+
+  // Reset pan whenever timeframe changes
+  useEffect(() => {
+    setPanOffset(0);
+    setPricePanOffset(0);
+  }, [timeframe]);
 
   // Viewport tracking for mobile portrait vs landscape detection
   const [viewport, setViewport] = useState(() => ({
@@ -102,25 +182,23 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     timeframe
   );
 
-  // Select candles according to timeframe and dynamically breathe active bar with live price
-  // In TradingView mobile portrait mode, shows recent 28-30 candles so candles are bold, legible, and uncompressed
-  const candles = useMemo(() => {
+  // Raw full candles for selected timeframe, breathing active bar with live price
+  const rawCandles = useMemo(() => {
     let raw: Candle[] = [];
-    const count = isPortraitMode ? (timeframe === '1D' ? 12 : 28) : (timeframe === '1D' ? 14 : 36);
     if (timeframe === '1D') {
-      raw = dailyCandles.slice(-count);
+      raw = dailyCandles;
     } else if (timeframe === '1H') {
-      raw = hourlyCandles.slice(-count);
+      raw = hourlyCandles;
     } else if (timeframe === '15m') {
       raw =
         fifteenMinCandles && fifteenMinCandles.length > 0
-          ? fifteenMinCandles.slice(-count)
-          : hourlyCandles.slice(-count);
+          ? fifteenMinCandles
+          : hourlyCandles;
     } else if (timeframe === '5m') {
       raw =
         fiveMinCandles && fiveMinCandles.length > 0
-          ? fiveMinCandles.slice(-count)
-          : hourlyCandles.slice(-count);
+          ? fiveMinCandles
+          : hourlyCandles;
     }
     if (!raw.length) return raw;
 
@@ -133,7 +211,46 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       low: Math.min(last.low, livePrice),
     };
     return [...raw.slice(0, -1), updatedLast];
-  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice, isPortraitMode]);
+  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice]);
+
+  // Windowing with Zoom and Pan
+  const baseCount = isPortraitMode ? (timeframe === '1D' ? 14 : 26) : (timeframe === '1D' ? 16 : 38);
+  const visibleCount = Math.max(6, Math.min(rawCandles.length, Math.round(baseCount / zoom)));
+  const maxPan = Math.max(0, rawCandles.length - visibleCount);
+  const effectivePan = Math.max(0, Math.min(maxPan, panOffset));
+
+  const candles = useMemo(() => {
+    if (!rawCandles.length) return [];
+    const end = rawCandles.length - effectivePan;
+    const start = Math.max(0, end - visibleCount);
+    return rawCandles.slice(start, end);
+  }, [rawCandles, effectivePan, visibleCount]);
+
+  // Mouse wheel zoom listener on chart container
+  useEffect(() => {
+    const el = svgContainerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        // Zoom in
+        setZoom((prev) => Math.min(3.0, Number((prev * 1.15).toFixed(2))));
+      } else {
+        // Zoom out
+        setZoom((prev) => Math.max(0.4, Number((prev / 1.15).toFixed(2))));
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const handleResetView = useCallback(() => {
+    setZoom(1.0);
+    setPanOffset(0);
+    setPricePanOffset(0);
+  }, []);
 
   // Dimensions: dynamically adapt to mobile portrait (TradingView style tall vertical canvas) vs desktop panoramic
   const svgWidth = isPortraitMode ? 560 : isMaximized ? 1600 : 1200;
@@ -148,12 +265,12 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     : 500;
 
   const profileWidth = showProfile ? (isPortraitMode ? 85 : isMaximized ? 260 : 170) : 0;
-  const rightMargin = isPortraitMode ? 74 : (isMaximized ? 110 : 95);
+  const rightMargin = isPortraitMode ? 78 : (isMaximized ? 116 : 100);
   const chartWidth = svgWidth - profileWidth - rightMargin;
-  const chartHeight = svgHeight - (isPortraitMode ? 36 : 40);
+  const chartHeight = svgHeight - (isPortraitMode ? 52 : 56);
   const marginTop = isPortraitMode ? 16 : 20;
 
-  // Min / Max calculation with quantized step intervals to eliminate sub-pixel grid flickering
+  // Min / Max calculation with quantized step intervals and vertical pricePanOffset
   const { minPrice, maxPrice } = useMemo(() => {
     if (!candles.length) return { minPrice: 0, maxPrice: 100 };
 
@@ -173,16 +290,18 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       if (sessionVwap.upper1Sigma) max = Math.max(max, sessionVwap.upper1Sigma);
     }
 
-    // Include live price
-    min = Math.min(min, livePrice);
-    max = Math.max(max, livePrice);
+    // Include live price only if viewing the current active bar
+    if (effectivePan === 0) {
+      min = Math.min(min, livePrice);
+      max = Math.max(max, livePrice);
+    }
 
     const range = max - min;
-    const rawPad = range > 0 ? range * 0.06 : (livePrice || 100) * 0.02;
+    const rawPad = range > 0 ? range * 0.08 : (livePrice || 100) * 0.02;
 
     // Step quantization: snap bounds to clean intervals so minor live fluctuations do not shift coordinate axes
-    const rawMin = min - rawPad;
-    const rawMax = max + rawPad;
+    const rawMin = min - rawPad + pricePanOffset;
+    const rawMax = max + rawPad + pricePanOffset;
     const step =
       range > 20000 ? 250 :
       range > 5000 ? 50 :
@@ -195,12 +314,15 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     const quantizedMax = Math.ceil(rawMax / step) * step;
 
     return { minPrice: quantizedMin, maxPrice: quantizedMax };
-  }, [candles, showPivots, showProfile, showVwap, pivots, volumeProfile, sessionVwap, livePrice]);
+  }, [candles, showPivots, showProfile, showVwap, pivots, volumeProfile, sessionVwap, livePrice, effectivePan, pricePanOffset]);
 
-  const priceToY = (price: number) => {
-    if (maxPrice <= minPrice) return chartHeight / 2;
-    return marginTop + chartHeight - ((price - minPrice) / (maxPrice - minPrice)) * chartHeight;
-  };
+  const priceToY = useCallback(
+    (price: number) => {
+      if (maxPrice <= minPrice) return chartHeight / 2;
+      return marginTop + chartHeight - ((price - minPrice) / (maxPrice - minPrice)) * chartHeight;
+    },
+    [maxPrice, minPrice, chartHeight, marginTop]
+  );
 
   const candleSpacing = chartWidth / candles.length;
   const candleBodyWidth = Math.max(3, candleSpacing * 0.65);
@@ -220,6 +342,83 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     }
     return ticks;
   }, [minPrice, maxPrice]);
+
+  // Floor Pivots Labels with guaranteed collision resolution (never overlap)
+  const pivotLabels: PositionedLabel[] = useMemo(() => {
+    if (!showPivots) return [];
+    const list: PositionedLabel[] = [
+      { id: 'p', text: `P: $${pivots.pivot.toLocaleString()}`, nominalY: priceToY(pivots.pivot), y: 0, color: '#c084fc' },
+      { id: 'r1', text: `R1: $${pivots.r1.toLocaleString()}`, nominalY: priceToY(pivots.r1), y: 0, color: '#f43f5e' },
+      { id: 'r2', text: `R2: $${pivots.r2.toLocaleString()}`, nominalY: priceToY(pivots.r2), y: 0, color: '#e11d48' },
+      { id: 's1', text: `S1: $${pivots.s1.toLocaleString()}`, nominalY: priceToY(pivots.s1), y: 0, color: '#10b981' },
+      { id: 's2', text: `S2: $${pivots.s2.toLocaleString()}`, nominalY: priceToY(pivots.s2), y: 0, color: '#059669' },
+    ].filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
+
+    return resolveCollisions(list, marginTop + 14, marginTop + chartHeight - 14, 25);
+  }, [showPivots, pivots, priceToY, marginTop, chartHeight]);
+
+  // Moving Average Labels with guaranteed collision resolution
+  const maLabels: PositionedLabel[] = useMemo(() => {
+    if (!showMAs || !movingAverages) return [];
+    const list: PositionedLabel[] = movingAverages
+      .filter((ma) => ma.period === 9 || ma.period === 50)
+      .map((ma) => ({
+        id: `ma-${ma.period}`,
+        text: `${ma.type} ${ma.period}: $${ma.value.toLocaleString()}`,
+        nominalY: priceToY(ma.value),
+        y: 0,
+        color: ma.period === 9 ? '#818cf8' : '#6366f1',
+      }))
+      .filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
+
+    return resolveCollisions(list, marginTop + 14, marginTop + chartHeight - 14, 25);
+  }, [showMAs, movingAverages, priceToY, marginTop, chartHeight]);
+
+  // Left-Side Overlay Labels (Session VWAP & Bands) with guaranteed collision resolution
+  const leftLabels: PositionedLabel[] = useMemo(() => {
+    const list: PositionedLabel[] = [];
+    if (showVwap && sessionVwap.price > 0) {
+      list.push({
+        id: 'vwap',
+        text: `Session VWAP: $${sessionVwap.price.toLocaleString()}`,
+        nominalY: priceToY(sessionVwap.price),
+        y: 0,
+        color: '#f59e0b',
+      });
+      if (sessionVwap.upper1Sigma) {
+        list.push({
+          id: 'vwap-upper',
+          text: `VWAP +1σ: $${sessionVwap.upper1Sigma.toLocaleString()}`,
+          nominalY: priceToY(sessionVwap.upper1Sigma),
+          y: 0,
+          color: '#fbbf24',
+        });
+      }
+      if (sessionVwap.lower1Sigma) {
+        list.push({
+          id: 'vwap-lower',
+          text: `VWAP -1σ: $${sessionVwap.lower1Sigma.toLocaleString()}`,
+          nominalY: priceToY(sessionVwap.lower1Sigma),
+          y: 0,
+          color: '#fbbf24',
+        });
+      }
+    }
+    const filtered = list.filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
+    return resolveCollisions(filtered, marginTop + 14, marginTop + chartHeight - 14, 25);
+  }, [showVwap, sessionVwap, priceToY, marginTop, chartHeight]);
+
+  // Volume Profile Level Labels with guaranteed collision resolution
+  const profileLabels: PositionedLabel[] = useMemo(() => {
+    if (!showProfile) return [];
+    const list: PositionedLabel[] = [
+      { id: 'vah', text: `VAH: $${volumeProfile.vah.toLocaleString()}`, nominalY: priceToY(volumeProfile.vah), y: 0, color: '#38bdf8' },
+      { id: 'poc', text: `POC: $${volumeProfile.poc.toLocaleString()}`, nominalY: priceToY(volumeProfile.poc), y: 0, color: '#f59e0b' },
+      { id: 'val', text: `VAL: $${volumeProfile.val.toLocaleString()}`, nominalY: priceToY(volumeProfile.val), y: 0, color: '#38bdf8' },
+    ].filter((l) => l.nominalY >= marginTop - 20 && l.nominalY <= marginTop + chartHeight + 20);
+
+    return resolveCollisions(list, marginTop + 14, marginTop + chartHeight - 14, 25);
+  }, [showProfile, volumeProfile, priceToY, marginTop, chartHeight]);
 
   const containerClasses = isMaximized
     ? 'fixed inset-0 z-50 bg-slate-950 flex flex-col justify-between h-[100dvh] w-screen overflow-hidden p-2 sm:p-3 select-none'
@@ -281,6 +480,40 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-400 animate-pulse" />
               <span>{countdown.formatted}</span>
             </div>
+          </div>
+
+          {/* Zoom & Pan Navigation Controls */}
+          <div className="flex items-center space-x-1 bg-slate-950 p-0.5 sm:p-1 rounded border border-slate-800 text-xs font-mono">
+            <button
+              onClick={() => setZoom((prev) => Math.max(0.4, Number((prev / 1.15).toFixed(2))))}
+              className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center justify-center"
+              title="Zoom Out (or scroll down on chart)"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <span
+              className="px-1 text-[11px] text-cyan-400 font-bold min-w-[34px] text-center select-none"
+              title="Current Zoom Magnification"
+            >
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              onClick={() => setZoom((prev) => Math.min(3.0, Number((prev * 1.15).toFixed(2))))}
+              className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center justify-center"
+              title="Zoom In (or scroll up on chart)"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0) && (
+              <button
+                onClick={handleResetView}
+                className="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 font-bold text-[10.5px] transition flex items-center gap-1"
+                title="Reset Zoom & Pan to live view"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span className="hidden sm:inline">Reset</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -464,8 +697,34 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
         </div>
       </div>
 
+      {/* Historical Pan Banner if panned back in time */}
+      {effectivePan > 0 && (
+        <div className="flex items-center justify-between px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded text-xs font-mono text-amber-300 shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="animate-pulse">⏪</span>
+            <span className="font-bold">Viewing Historical Action:</span>
+            <span>{effectivePan} bars shifted into the past</span>
+          </div>
+          <button
+            onClick={() => {
+              setPanOffset(0);
+              setPricePanOffset(0);
+            }}
+            className="px-2.5 py-0.5 rounded bg-amber-500 text-slate-950 font-bold text-[11px] hover:bg-amber-400 transition flex items-center gap-1"
+          >
+            <span>Jump to Live</span>
+            <span>⏩</span>
+          </button>
+        </div>
+      )}
+
       {/* Main SVG Visualization Canvas */}
-      <div className={`relative w-full overflow-hidden bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center ${isMaximized ? 'flex-1 min-h-0' : ''}`}>
+      <div
+        ref={svgContainerRef}
+        className={`relative w-full overflow-hidden bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center select-none ${
+          isMaximized ? 'flex-1 min-h-0' : ''
+        }`}
+      >
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
           className={`w-full ${isMaximized ? 'h-full object-contain' : 'h-auto'} select-none`}
@@ -481,16 +740,16 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               <stop offset="100%" stopColor="#475569" stopOpacity="0.05" />
             </linearGradient>
             <linearGradient id="bullishFvgGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#10b981" stopOpacity="0.15" />
+              <stop offset="0%" stopColor="#10b981" stopOpacity="0.18" />
               <stop offset="100%" stopColor="#10b981" stopOpacity="0.05" />
             </linearGradient>
             <linearGradient id="bearishFvgGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.15" />
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.18" />
               <stop offset="100%" stopColor="#ef4444" stopOpacity="0.05" />
             </linearGradient>
           </defs>
 
-          {/* Grid lines */}
+          {/* Grid lines & Right Price Ticks */}
           {yTicks.map((price, idx) => {
             const y = priceToY(price);
             return (
@@ -504,13 +763,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   strokeDasharray="3 3"
                   strokeWidth={1}
                 />
-                {/* Price labels on right */}
+                {/* Price labels on right margin - enlarged for high readability */}
                 <text
                   x={chartWidth + profileWidth + 8}
-                  y={y + 3}
-                  fill="#64748b"
-                  fontSize={10}
+                  y={y + 4}
+                  fill="#94a3b8"
+                  fontSize={isPortraitMode ? 10.5 : 11.5}
                   fontFamily="monospace"
+                  fontWeight="bold"
                 >
                   ${price >= 1000 ? Math.round(price).toLocaleString() : price.toFixed(2)}
                 </text>
@@ -520,7 +780,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
           {/* FVG Gap Shaded Zones */}
           {showGaps &&
-            gaps.map((gap, idx) => {
+            gaps.map((gap) => {
               const yHigh = priceToY(gap.highPrice);
               const yLow = priceToY(gap.lowPrice);
               const height = Math.abs(yLow - yHigh);
@@ -536,14 +796,26 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                     stroke={isBull ? '#10b981' : '#ef4444'}
                     strokeWidth={0.8}
                     strokeDasharray="4 2"
-                    opacity={0.7}
+                    opacity={0.75}
+                  />
+                  <rect
+                    x={10}
+                    y={Math.min(yHigh, yLow) + 2}
+                    width={isPortraitMode ? 170 : 210}
+                    height={18}
+                    fill="#020617"
+                    stroke={isBull ? '#10b981' : '#ef4444'}
+                    strokeWidth={0.8}
+                    rx={3}
+                    opacity={0.92}
                   />
                   <text
-                    x={12}
-                    y={Math.min(yHigh, yLow) + 12}
+                    x={14}
+                    y={Math.min(yHigh, yLow) + 14}
                     fill={isBull ? '#34d399' : '#f87171'}
-                    fontSize={9}
+                    fontSize={isPortraitMode ? 9.5 : 11}
                     fontFamily="monospace"
+                    fontWeight="bold"
                   >
                     Untested {gap.type.replace('_', ' ')} (${gap.lowPrice} - ${gap.highPrice})
                   </text>
@@ -551,10 +823,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               );
             })}
 
-          {/* Floor Pivots Overlays */}
+          {/* Floor Pivots Overlays (Lines + De-conflicted Non-Overlapping Labels) */}
           {showPivots && (
             <g className="pivots-layer">
-              {/* Pivot */}
               <line
                 x1={0}
                 y1={priceToY(pivots.pivot)}
@@ -564,17 +835,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeWidth={1.5}
                 strokeDasharray="6 3"
               />
-              <text
-                x={chartWidth - 110}
-                y={priceToY(pivots.pivot) - 4}
-                fill="#c084fc"
-                fontSize={9}
-                fontFamily="monospace"
-              >
-                P: ${pivots.pivot.toLocaleString()}
-              </text>
-
-              {/* R1 */}
               <line
                 x1={0}
                 y1={priceToY(pivots.r1)}
@@ -584,17 +844,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeWidth={1}
                 strokeDasharray="4 4"
               />
-              <text
-                x={chartWidth - 110}
-                y={priceToY(pivots.r1) - 4}
-                fill="#f43f5e"
-                fontSize={9}
-                fontFamily="monospace"
-              >
-                R1: ${pivots.r1.toLocaleString()}
-              </text>
-
-              {/* R2 */}
               <line
                 x1={0}
                 y1={priceToY(pivots.r2)}
@@ -604,17 +853,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeWidth={1}
                 strokeDasharray="2 2"
               />
-              <text
-                x={chartWidth - 110}
-                y={priceToY(pivots.r2) - 4}
-                fill="#e11d48"
-                fontSize={9}
-                fontFamily="monospace"
-              >
-                R2: ${pivots.r2.toLocaleString()}
-              </text>
-
-              {/* S1 */}
               <line
                 x1={0}
                 y1={priceToY(pivots.s1)}
@@ -624,17 +862,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeWidth={1}
                 strokeDasharray="4 4"
               />
-              <text
-                x={chartWidth - 110}
-                y={priceToY(pivots.s1) - 4}
-                fill="#10b981"
-                fontSize={9}
-                fontFamily="monospace"
-              >
-                S1: ${pivots.s1.toLocaleString()}
-              </text>
-
-              {/* S2 */}
               <line
                 x1={0}
                 y1={priceToY(pivots.s2)}
@@ -644,22 +871,56 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeWidth={1}
                 strokeDasharray="2 2"
               />
-              <text
-                x={chartWidth - 110}
-                y={priceToY(pivots.s2) - 4}
-                fill="#059669"
-                fontSize={9}
-                fontFamily="monospace"
-              >
-                S2: ${pivots.s2.toLocaleString()}
-              </text>
+
+              {/* Anti-Overlap Resolved Floor Pivot Badges */}
+              {pivotLabels.map((lbl) => {
+                const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
+                const badgeWidth = isPortraitMode ? 108 : 128;
+                const badgeX = chartWidth - badgeWidth - 4;
+                return (
+                  <g key={lbl.id} className="pivot-label-badge" pointerEvents="none">
+                    {isShifted && (
+                      <line
+                        x1={chartWidth - 2}
+                        y1={lbl.nominalY}
+                        x2={chartWidth - 6}
+                        y2={lbl.y}
+                        stroke={lbl.color}
+                        strokeWidth={1.2}
+                        strokeDasharray="2 2"
+                      />
+                    )}
+                    <rect
+                      x={badgeX}
+                      y={lbl.y - 11}
+                      width={badgeWidth}
+                      height={22}
+                      fill="#020617"
+                      stroke={lbl.color}
+                      strokeWidth={1.2}
+                      rx={4}
+                      opacity={0.96}
+                    />
+                    <text
+                      x={badgeX + badgeWidth - 8}
+                      y={lbl.y + 4.5}
+                      fill={lbl.color}
+                      fontSize={isPortraitMode ? 11 : 12}
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="end"
+                    >
+                      {lbl.text}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           )}
 
-          {/* Session VWAP Line and Bands */}
+          {/* Session VWAP Line, Bands & De-conflicted Left-Side Labels */}
           {showVwap && (
             <g className="vwap-layer">
-              {/* Upper 1 Sigma */}
               <line
                 x1={0}
                 y1={priceToY(sessionVwap.upper1Sigma)}
@@ -670,7 +931,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeDasharray="2 3"
                 opacity={0.6}
               />
-              {/* Lower 1 Sigma */}
               <line
                 x1={0}
                 y1={priceToY(sessionVwap.lower1Sigma)}
@@ -681,7 +941,6 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 strokeDasharray="2 3"
                 opacity={0.6}
               />
-              {/* Main VWAP */}
               <line
                 x1={0}
                 y1={priceToY(sessionVwap.price)}
@@ -690,16 +949,50 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 stroke="#f59e0b"
                 strokeWidth={2}
               />
-              <text
-                x={12}
-                y={priceToY(sessionVwap.price) - 5}
-                fill="#f59e0b"
-                fontSize={9}
-                fontFamily="monospace"
-                fontWeight="bold"
-              >
-                Session VWAP: ${sessionVwap.price.toLocaleString()}
-              </text>
+
+              {/* Anti-Overlap Resolved Left-Side VWAP Badges */}
+              {leftLabels.map((lbl) => {
+                const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
+                const badgeWidth = isPortraitMode ? 142 : 180;
+                const badgeX = 8;
+                return (
+                  <g key={lbl.id} className="vwap-label-badge" pointerEvents="none">
+                    {isShifted && (
+                      <line
+                        x1={badgeX + badgeWidth}
+                        y1={lbl.nominalY}
+                        x2={badgeX + badgeWidth + 6}
+                        y2={lbl.y}
+                        stroke={lbl.color}
+                        strokeWidth={1.2}
+                        strokeDasharray="2 2"
+                      />
+                    )}
+                    <rect
+                      x={badgeX}
+                      y={lbl.y - 11}
+                      width={badgeWidth}
+                      height={22}
+                      fill="#020617"
+                      stroke={lbl.color}
+                      strokeWidth={1.2}
+                      rx={4}
+                      opacity={0.96}
+                    />
+                    <text
+                      x={badgeX + 8}
+                      y={lbl.y + 4.5}
+                      fill={lbl.color}
+                      fontSize={isPortraitMode ? 11 : 12}
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="start"
+                    >
+                      {lbl.text}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           )}
 
@@ -713,30 +1006,63 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   if (y < marginTop || y > marginTop + chartHeight) return null;
                   const color = ma.period === 9 ? '#818cf8' : '#6366f1';
                   return (
-                    <g key={`ma-${ma.period}-${ma.type}`}>
-                      <line
-                        x1={0}
-                        y1={y}
-                        x2={chartWidth}
-                        y2={y}
-                        stroke={color}
-                        strokeWidth={1.2}
-                        strokeDasharray={ma.period === 9 ? '4 2' : '6 3'}
-                        opacity={0.85}
-                      />
-                      <text
-                        x={chartWidth - 200}
-                        y={y - 4}
-                        fill={color}
-                        fontSize={9}
-                        fontFamily="monospace"
-                        fontWeight="bold"
-                      >
-                        {ma.type} {ma.period}: ${ma.value.toLocaleString()}
-                      </text>
-                    </g>
+                    <line
+                      key={`ma-line-${ma.period}`}
+                      x1={0}
+                      y1={y}
+                      x2={chartWidth}
+                      y2={y}
+                      stroke={color}
+                      strokeWidth={1.2}
+                      strokeDasharray={ma.period === 9 ? '4 2' : '6 3'}
+                      opacity={0.85}
+                    />
                   );
                 })}
+
+              {/* Anti-Overlap Resolved MA Badges in Dedicated Column to Left of Pivots */}
+              {maLabels.map((lbl) => {
+                const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
+                const badgeWidth = isPortraitMode ? 116 : 142;
+                const badgeX = chartWidth - (isPortraitMode ? 120 : 148) - badgeWidth;
+                return (
+                  <g key={lbl.id} className="ma-label-badge" pointerEvents="none">
+                    {isShifted && (
+                      <line
+                        x1={badgeX + badgeWidth}
+                        y1={lbl.nominalY}
+                        x2={badgeX + badgeWidth + 6}
+                        y2={lbl.y}
+                        stroke={lbl.color}
+                        strokeWidth={1.2}
+                        strokeDasharray="2 2"
+                      />
+                    )}
+                    <rect
+                      x={badgeX}
+                      y={lbl.y - 11}
+                      width={badgeWidth}
+                      height={22}
+                      fill="#020617"
+                      stroke={lbl.color}
+                      strokeWidth={1.2}
+                      rx={4}
+                      opacity={0.96}
+                    />
+                    <text
+                      x={badgeX + badgeWidth - 8}
+                      y={lbl.y + 4.5}
+                      fill={lbl.color}
+                      fontSize={isPortraitMode ? 10.5 : 11.5}
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="end"
+                    >
+                      {lbl.text}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           )}
 
@@ -762,6 +1088,44 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   opacity={isHovered ? 0.9 : isCurrent ? 0.6 : 0.25}
                   rx={1}
                 />
+              );
+            })}
+          </g>
+
+          {/* Bottom X-Axis Time Marks */}
+          <g className="time-axis-layer select-none" pointerEvents="none">
+            {candles.map((c, i) => {
+              const step = visibleCount > 32 ? 6 : visibleCount > 18 ? 4 : 2;
+              if (i % step !== 0 && i !== candles.length - 1) return null;
+              const x = i * candleSpacing + candleSpacing / 2;
+              const d = new Date(c.timestamp);
+              const label =
+                timeframe === '1D'
+                  ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  : d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+              return (
+                <g key={`time-${c.timestamp}`}>
+                  <line
+                    x1={x}
+                    y1={marginTop + chartHeight}
+                    x2={x}
+                    y2={marginTop + chartHeight + 4}
+                    stroke="#475569"
+                    strokeWidth={1}
+                  />
+                  <text
+                    x={x}
+                    y={marginTop + chartHeight + 17}
+                    fill="#94a3b8"
+                    fontSize={isPortraitMode ? 10 : 11}
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    {label}
+                  </text>
+                </g>
               );
             })}
           </g>
@@ -824,7 +1188,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   x={10}
                   y={marginTop + 14}
                   fill="#94a3b8"
-                  fontSize={10}
+                  fontSize={isPortraitMode ? 9.5 : 11}
                   fontFamily="monospace"
                   fontWeight="bold"
                 >
@@ -869,7 +1233,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                           x={barWidth + 4}
                           y={y + 3}
                           fill="#fbbf24"
-                          fontSize={9}
+                          fontSize={10}
                           fontFamily="monospace"
                           fontWeight="bold"
                         >
@@ -881,16 +1245,49 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 });
               })()}
 
-              {/* Profile Labels */}
-              <text x={10} y={priceToY(volumeProfile.vah) - 4} fill="#38bdf8" fontSize={9} fontFamily="monospace" fontWeight="bold">
-                VAH: ${volumeProfile.vah.toLocaleString()}
-              </text>
-              <text x={10} y={priceToY(volumeProfile.poc) - 4} fill="#f59e0b" fontSize={9} fontFamily="monospace" fontWeight="bold">
-                POC: ${volumeProfile.poc.toLocaleString()}
-              </text>
-              <text x={10} y={priceToY(volumeProfile.val) + 12} fill="#38bdf8" fontSize={9} fontFamily="monospace" fontWeight="bold">
-                VAL: ${volumeProfile.val.toLocaleString()}
-              </text>
+              {/* Anti-Overlap Resolved Volume Profile Level Labels */}
+              {profileLabels.map((lbl) => {
+                const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
+                const badgeWidth = isPortraitMode ? 82 : 116;
+                const badgeX = 6;
+                return (
+                  <g key={lbl.id} className="profile-label-badge" pointerEvents="none">
+                    {isShifted && (
+                      <line
+                        x1={0}
+                        y1={lbl.nominalY}
+                        x2={badgeX}
+                        y2={lbl.y}
+                        stroke={lbl.color}
+                        strokeWidth={1}
+                        strokeDasharray="2 2"
+                      />
+                    )}
+                    <rect
+                      x={badgeX}
+                      y={lbl.y - 10}
+                      width={badgeWidth}
+                      height={20}
+                      fill="#020617"
+                      stroke={lbl.color}
+                      strokeWidth={1}
+                      rx={3}
+                      opacity={0.96}
+                    />
+                    <text
+                      x={badgeX + 6}
+                      y={lbl.y + 4.5}
+                      fill={lbl.color}
+                      fontSize={isPortraitMode ? 10.5 : 11.5}
+                      fontFamily="monospace"
+                      fontWeight="bold"
+                      textAnchor="start"
+                    >
+                      {lbl.text}
+                    </text>
+                  </g>
+                );
+              })}
             </g>
           )}
 
@@ -916,21 +1313,21 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 />
                 {/* Floating pill background */}
                 <rect
-                  x={lastX - 48}
+                  x={lastX - 52}
                   y={badgeY}
-                  width={96}
-                  height={16}
+                  width={104}
+                  height={18}
                   fill="#020617"
                   stroke="#0284c7"
                   strokeWidth={1.2}
                   rx={4}
-                  opacity={0.95}
+                  opacity={0.96}
                 />
                 <text
                   x={lastX}
-                  y={badgeY + 11.5}
+                  y={badgeY + 12.5}
                   fill="#38bdf8"
-                  fontSize={8.5}
+                  fontSize={isPortraitMode ? 9.5 : 10.5}
                   fontFamily="monospace"
                   fontWeight="bold"
                   textAnchor="middle"
@@ -971,7 +1368,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
             return (
               <g className="spot-price-tracker select-none" pointerEvents="none">
-                {/* Horizontal Ray Across Chart - Steady calm institutional cyan */}
+                {/* Horizontal Ray Across Chart */}
                 <line
                   x1={0}
                   y1={yLive}
@@ -983,7 +1380,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   opacity={0.85}
                 />
 
-                {/* Stable Beacon Dot on Last Active Bar - Clean SVG dual ring without animate-ping glitch */}
+                {/* Stable Beacon Dot on Last Active Bar */}
                 {candles.length > 0 && (
                   <g>
                     <circle
@@ -1010,27 +1407,26 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
                 {/* Right Margin: Live Price Tag & Volume Badge */}
                 <g transform={`translate(${tagX + 4}, ${clampedY - 10})`}>
-                  {/* Volume Value Tag Directly Above the Price Label (Corresponding to Selected Timeframe) */}
+                  {/* Volume Value Tag Directly Above Price Label */}
                   <g className="timeframe-volume-badge">
                     <rect
                       x={0}
-                      y={-20}
-                      width={82}
-                      height={17}
+                      y={-22}
+                      width={isPortraitMode ? 72 : 88}
+                      height={19}
                       fill="#020617"
                       stroke="#38bdf8"
                       strokeWidth={1}
                       rx={3}
                     />
                     <text
-                      x={41}
-                      y={-8}
+                      x={(isPortraitMode ? 72 : 88) / 2}
+                      y={-9}
                       fill="#38bdf8"
-                      fontSize={isPortraitMode ? 7.5 : 8.5}
+                      fontSize={isPortraitMode ? 9 : 10.5}
                       fontFamily="monospace"
                       fontWeight="bold"
                       textAnchor="middle"
-                      letterSpacing="-0.2px"
                     >
                       {timeframe} Vol: {volumeFormatted}
                     </text>
@@ -1038,22 +1434,22 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
                   {/* Live Price Tag Box */}
                   {(() => {
-                    const tagWidth = isPortraitMode ? 66 : 82;
+                    const tagWidth = isPortraitMode ? 72 : 88;
                     return (
                       <>
                         <rect
                           x={0}
                           y={0}
                           width={tagWidth}
-                          height={18}
+                          height={20}
                           fill={priceTagBg}
                           rx={3}
                         />
                         <text
                           x={tagWidth / 2}
-                          y={13}
+                          y={14.5}
                           fill="#ffffff"
-                          fontSize={isPortraitMode ? 8.5 : 10}
+                          fontSize={isPortraitMode ? 9.5 : 11.5}
                           fontFamily="monospace"
                           fontWeight="bold"
                           textAnchor="middle"
@@ -1064,9 +1460,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         {/* Bar Close Countdown Attached Tag */}
                         <rect
                           x={0}
-                          y={21}
+                          y={23}
                           width={tagWidth}
-                          height={16}
+                          height={18}
                           fill="#020617"
                           stroke="#f59e0b"
                           strokeWidth={1}
@@ -1074,9 +1470,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         />
                         <text
                           x={tagWidth / 2}
-                          y={33}
+                          y={36}
                           fill="#fbbf24"
-                          fontSize={isPortraitMode ? 8 : 9.5}
+                          fontSize={isPortraitMode ? 9 : 10.5}
                           fontFamily="monospace"
                           fontWeight="bold"
                           textAnchor="middle"
@@ -1119,14 +1515,26 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </g>
           )}
 
-          {/* Interactive Mouse & Touch Tracking Layer - Smooth hover & mobile slide */}
+          {/* Interactive Mouse & Touch Tracking Layer - Smooth hover & pan/drag gesture support */}
           <rect
             x={0}
             y={marginTop}
             width={chartWidth}
             height={chartHeight}
             fill="transparent"
-            className="cursor-crosshair touch-none"
+            className={`select-none touch-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              isDraggingRef.current = true;
+              setIsDragging(true);
+              setDragMoved(false);
+              dragStartRef.current = {
+                x: e.clientX,
+                y: e.clientY,
+                initialPan: panOffset,
+                initialPricePan: pricePanOffset,
+              };
+            }}
             onMouseMove={(e) => {
               const svgEl = e.currentTarget.ownerSVGElement;
               if (!svgEl) return;
@@ -1137,58 +1545,127 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               if (!ctm) return;
               const svgPt = pt.matrixTransform(ctm.inverse());
 
-              if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
-                const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
-                setHoverCandle(candles[idx]);
-                setHoverX(idx * candleSpacing + candleSpacing / 2);
-                setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+              if (isDraggingRef.current) {
+                const dx = e.clientX - dragStartRef.current.x;
+                const dy = e.clientY - dragStartRef.current.y;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                  setDragMoved(true);
+                }
+
+                // Horizontal candle shifting: positive dx pulls earlier candles into view
+                const candleShift = Math.round(dx / Math.max(4, candleSpacing));
+                const newPan = Math.max(0, Math.min(maxPan, dragStartRef.current.initialPan + candleShift));
+                setPanOffset(newPan);
+
+                // Vertical dollar shifting
+                const pricePerPixel = (maxPrice - minPrice) / chartHeight;
+                const priceShift = dy * pricePerPixel;
+                setPricePanOffset(dragStartRef.current.initialPricePan + priceShift);
+
+                setHoverCandle(null);
+                setHoverX(null);
+                setHoverY(null);
+              } else {
+                if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
+                  const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
+                  setHoverCandle(candles[idx]);
+                  setHoverX(idx * candleSpacing + candleSpacing / 2);
+                  setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+                }
               }
             }}
+            onMouseUp={() => {
+              isDraggingRef.current = false;
+              setIsDragging(false);
+            }}
             onMouseLeave={() => {
+              isDraggingRef.current = false;
+              setIsDragging(false);
               setHoverCandle(null);
               setHoverX(null);
               setHoverY(null);
             }}
+            onDoubleClick={handleResetView}
             onTouchStart={(e) => {
-              if (!e.touches.length) return;
-              const touch = e.touches[0];
-              const svgEl = e.currentTarget.ownerSVGElement;
-              if (!svgEl) return;
-              const pt = svgEl.createSVGPoint();
-              pt.x = touch.clientX;
-              pt.y = touch.clientY;
-              const ctm = svgEl.getScreenCTM();
-              if (!ctm) return;
-              const svgPt = pt.matrixTransform(ctm.inverse());
-              if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
-                const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
-                setHoverCandle(candles[idx]);
-                setHoverX(idx * candleSpacing + candleSpacing / 2);
-                setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+              if (e.touches.length === 2) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                touchDistRef.current = Math.hypot(dx, dy);
+                isDraggingRef.current = false;
+                setIsDragging(false);
+                return;
+              }
+              if (e.touches.length === 1) {
+                isDraggingRef.current = true;
+                setIsDragging(true);
+                setDragMoved(false);
+                dragStartRef.current = {
+                  x: e.touches[0].clientX,
+                  y: e.touches[0].clientY,
+                  initialPan: panOffset,
+                  initialPricePan: pricePanOffset,
+                };
               }
             }}
             onTouchMove={(e) => {
-              if (!e.touches.length) return;
-              const touch = e.touches[0];
-              const svgEl = e.currentTarget.ownerSVGElement;
-              if (!svgEl) return;
-              const pt = svgEl.createSVGPoint();
-              pt.x = touch.clientX;
-              pt.y = touch.clientY;
-              const ctm = svgEl.getScreenCTM();
-              if (!ctm) return;
-              const svgPt = pt.matrixTransform(ctm.inverse());
-              if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
-                const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
-                setHoverCandle(candles[idx]);
-                setHoverX(idx * candleSpacing + candleSpacing / 2);
-                setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+              // Pinch to zoom
+              if (e.touches.length === 2 && touchDistRef.current) {
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy);
+                const factor = dist / touchDistRef.current;
+                if (Math.abs(factor - 1) > 0.04) {
+                  setZoom((prev) =>
+                    Math.max(0.4, Math.min(3.0, Number((prev * (factor > 1 ? 1.05 : 0.95)).toFixed(2))))
+                  );
+                  touchDistRef.current = dist;
+                }
+                return;
+              }
+
+              // Single finger pan / drag
+              if (e.touches.length === 1 && isDraggingRef.current) {
+                const dx = e.touches[0].clientX - dragStartRef.current.x;
+                const dy = e.touches[0].clientY - dragStartRef.current.y;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                  setDragMoved(true);
+                }
+
+                const candleShift = Math.round(dx / Math.max(4, candleSpacing));
+                const newPan = Math.max(0, Math.min(maxPan, dragStartRef.current.initialPan + candleShift));
+                setPanOffset(newPan);
+
+                const pricePerPixel = (maxPrice - minPrice) / chartHeight;
+                const priceShift = dy * pricePerPixel;
+                setPricePanOffset(dragStartRef.current.initialPricePan + priceShift);
+
+                const svgEl = e.currentTarget.ownerSVGElement;
+                if (svgEl && !dragMoved) {
+                  const pt = svgEl.createSVGPoint();
+                  pt.x = e.touches[0].clientX;
+                  pt.y = e.touches[0].clientY;
+                  const ctm = svgEl.getScreenCTM();
+                  if (ctm) {
+                    const svgPt = pt.matrixTransform(ctm.inverse());
+                    if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
+                      const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
+                      setHoverCandle(candles[idx]);
+                      setHoverX(idx * candleSpacing + candleSpacing / 2);
+                      setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+                    }
+                  }
+                }
               }
             }}
             onTouchEnd={() => {
-              setHoverCandle(null);
-              setHoverX(null);
-              setHoverY(null);
+              isDraggingRef.current = false;
+              setIsDragging(false);
+              touchDistRef.current = null;
+              if (dragMoved) {
+                setHoverCandle(null);
+                setHoverX(null);
+                setHoverY(null);
+              }
             }}
           />
         </svg>

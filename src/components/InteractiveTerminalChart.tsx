@@ -7,7 +7,9 @@ import {
   Layers,
   Maximize2,
   Minimize2,
+  RotateCcw,
   Sliders,
+  Smartphone,
   TrendingUp,
   X,
   Zap,
@@ -45,6 +47,43 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [hoverY, setHoverY] = useState<number | null>(null);
 
+  // Viewport tracking for mobile portrait vs landscape detection
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1200,
+    height: typeof window !== 'undefined' ? window.innerHeight : 800,
+  }));
+  // User orientation override when maximized (defaults to portrait on mobile, like TradingView mobile)
+  const [maximizedOrientation, setMaximizedOrientation] = useState<'portrait' | 'landscape'>('portrait');
+
+  useEffect(() => {
+    const handleResize = () => {
+      setViewport({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
+  const isMobileDevice =
+    viewport.width < 768 ||
+    (typeof window !== 'undefined' &&
+      ('ontouchstart' in window || navigator.maxTouchPoints > 0) &&
+      viewport.width < 1024);
+  const isDevicePortrait = viewport.height >= viewport.width;
+
+  // TradingView mobile portrait mode: active when maximized on mobile/tablet or when explicitly set to portrait
+  const isPortraitMode =
+    isMaximized &&
+    (isMobileDevice
+      ? maximizedOrientation === 'portrait'
+      : maximizedOrientation === 'portrait' && isDevicePortrait);
+
   // Close maximize on ESC key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -63,21 +102,25 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     timeframe
   );
 
-  // Select candles according to timeframe (5m, 15m, 1H, 1D) and dynamically breathe active bar with live price
+  // Select candles according to timeframe and dynamically breathe active bar with live price
+  // In TradingView mobile portrait mode, shows recent 28-30 candles so candles are bold, legible, and uncompressed
   const candles = useMemo(() => {
     let raw: Candle[] = [];
+    const count = isPortraitMode ? (timeframe === '1D' ? 12 : 28) : (timeframe === '1D' ? 14 : 36);
     if (timeframe === '1D') {
-      raw = dailyCandles.slice(-14);
+      raw = dailyCandles.slice(-count);
     } else if (timeframe === '1H') {
-      raw = hourlyCandles.slice(-36);
+      raw = hourlyCandles.slice(-count);
     } else if (timeframe === '15m') {
-      raw = (fifteenMinCandles && fifteenMinCandles.length > 0)
-        ? fifteenMinCandles.slice(-36)
-        : hourlyCandles.slice(-36);
+      raw =
+        fifteenMinCandles && fifteenMinCandles.length > 0
+          ? fifteenMinCandles.slice(-count)
+          : hourlyCandles.slice(-count);
     } else if (timeframe === '5m') {
-      raw = (fiveMinCandles && fiveMinCandles.length > 0)
-        ? fiveMinCandles.slice(-36)
-        : hourlyCandles.slice(-36);
+      raw =
+        fiveMinCandles && fiveMinCandles.length > 0
+          ? fiveMinCandles.slice(-count)
+          : hourlyCandles.slice(-count);
     }
     if (!raw.length) return raw;
 
@@ -90,15 +133,25 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       low: Math.min(last.low, livePrice),
     };
     return [...raw.slice(0, -1), updatedLast];
-  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice]);
+  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice, isPortraitMode]);
 
-  // Dimensions: dynamically expand when maximized for broad panoramic clarity
-  const svgWidth = isMaximized ? 1600 : 1200;
-  const svgHeight = isMaximized ? 750 : 500;
-  const profileWidth = showProfile ? (isMaximized ? 260 : 170) : 0;
-  const chartWidth = svgWidth - profileWidth - (isMaximized ? 110 : 95); // right y-axis margin for price & countdown tags
-  const chartHeight = svgHeight - 40; // 40px bottom x-axis margin
-  const marginTop = 20;
+  // Dimensions: dynamically adapt to mobile portrait (TradingView style tall vertical canvas) vs desktop panoramic
+  const svgWidth = isPortraitMode ? 560 : isMaximized ? 1600 : 1200;
+  // Compute portrait aspect ratio to precisely match mobile viewport height
+  const mobileHeightRatio = isPortraitMode
+    ? Math.max(1.4, Math.min(2.05, (viewport.height - 95) / Math.max(300, viewport.width)))
+    : 0.46875;
+  const svgHeight = isPortraitMode
+    ? Math.round(560 * mobileHeightRatio)
+    : isMaximized
+    ? 750
+    : 500;
+
+  const profileWidth = showProfile ? (isPortraitMode ? 85 : isMaximized ? 260 : 170) : 0;
+  const rightMargin = isPortraitMode ? 74 : (isMaximized ? 110 : 95);
+  const chartWidth = svgWidth - profileWidth - rightMargin;
+  const chartHeight = svgHeight - (isPortraitMode ? 36 : 40);
+  const marginTop = isPortraitMode ? 16 : 20;
 
   // Min / Max calculation with quantized step intervals to eliminate sub-pixel grid flickering
   const { minPrice, maxPrice } = useMemo(() => {
@@ -169,31 +222,31 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   }, [minPrice, maxPrice]);
 
   const containerClasses = isMaximized
-    ? 'fixed inset-0 z-50 bg-slate-950/98 backdrop-blur-md p-3 sm:p-5 overflow-y-auto flex flex-col justify-start space-y-3'
+    ? 'fixed inset-0 z-50 bg-slate-950 flex flex-col justify-between h-[100dvh] w-screen overflow-hidden p-2 sm:p-3 select-none'
     : 'bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm w-full flex flex-col space-y-2.5';
 
   return (
     <div className={containerClasses}>
       {/* Chart Top Bar Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-        <div className="flex items-center space-x-3">
-          <span className="text-base font-bold font-mono text-white flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5 shrink-0">
+        <div className="flex items-center space-x-2 sm:space-x-3">
+          <span className="text-sm sm:text-base font-bold font-mono text-white flex items-center gap-1.5 sm:gap-2">
             <span>{symbol}</span>
-            <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-normal">
-              Live Terminal Chart
+            <span className="text-[10px] sm:text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-normal">
+              {isPortraitMode ? 'TV Mobile' : 'Terminal'}
             </span>
             {isMaximized && (
-              <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30">
-                MAXIMIZED VIEW (ESC to Exit)
+              <span className="text-[9px] sm:text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/30">
+                {isPortraitMode ? 'PORTRAIT' : 'LANDSCAPE'}
               </span>
             )}
           </span>
 
           {/* Timeframe Buttons (5m, 15m, 1H, 1D) & Countdown Indicator */}
-          <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded border border-slate-800 text-xs font-mono">
+          <div className="flex items-center space-x-1 bg-slate-950 p-0.5 sm:p-1 rounded border border-slate-800 text-xs font-mono">
             <button
               onClick={() => setTimeframe('5m')}
-              className={`px-2 py-0.5 rounded transition ${
+              className={`px-1.5 sm:px-2 py-0.5 rounded transition ${
                 timeframe === '5m' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -201,7 +254,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </button>
             <button
               onClick={() => setTimeframe('15m')}
-              className={`px-2 py-0.5 rounded transition ${
+              className={`px-1.5 sm:px-2 py-0.5 rounded transition ${
                 timeframe === '15m' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -209,7 +262,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </button>
             <button
               onClick={() => setTimeframe('1H')}
-              className={`px-2 py-0.5 rounded transition ${
+              className={`px-1.5 sm:px-2 py-0.5 rounded transition ${
                 timeframe === '1H' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -217,101 +270,131 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </button>
             <button
               onClick={() => setTimeframe('1D')}
-              className={`px-2 py-0.5 rounded transition ${
+              className={`px-1.5 sm:px-2 py-0.5 rounded transition ${
                 timeframe === '1D' ? 'bg-cyan-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               1D
             </button>
-            <div className="h-3.5 w-px bg-slate-800 mx-1 hidden sm:block" />
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 font-bold text-[11px] border border-amber-500/20">
-              <Clock className="w-3 h-3 text-amber-400 animate-pulse" />
+            <div className="h-3 w-px bg-slate-800 mx-0.5 hidden sm:block" />
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 font-bold text-[10.5px] border border-amber-500/20">
+              <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-400 animate-pulse" />
               <span>{countdown.formatted}</span>
             </div>
           </div>
         </div>
 
-        {/* Overlay Toggles & Maximize Button */}
-        <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+        {/* Overlay Toggles, Orientation Switcher & Maximize Button */}
+        <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+          {/* Mobile Orientation Switcher when Maximized */}
+          {isMaximized && (
+            <div className="flex items-center space-x-1 bg-slate-950 p-0.5 rounded border border-slate-800 text-[10.5px]">
+              <button
+                onClick={() => setMaximizedOrientation('portrait')}
+                className={`px-2 py-0.5 rounded transition flex items-center gap-1 ${
+                  maximizedOrientation === 'portrait'
+                    ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Portrait Mode (TradingView Mobile vertical screen utilization)"
+              >
+                <Smartphone className="w-3 h-3" />
+                <span className="hidden xs:inline">Portrait</span>
+              </button>
+              <button
+                onClick={() => setMaximizedOrientation('landscape')}
+                className={`px-2 py-0.5 rounded transition flex items-center gap-1 ${
+                  maximizedOrientation === 'landscape'
+                    ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title="Landscape Mode (Panoramic wide chart)"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span className="hidden xs:inline">Landscape</span>
+              </button>
+            </div>
+          )}
+
           <button
             onClick={() => setShowPivots(!showPivots)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition ${
+            className={`px-2 py-1 rounded border flex items-center gap-1 transition ${
               showPivots
                 ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
                 : 'bg-slate-950 text-slate-500 border-slate-800'
             }`}
           >
             {showPivots ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            <span>Floor Pivots</span>
+            <span className="hidden md:inline">Floor </span><span>Pivots</span>
           </button>
 
           <button
             onClick={() => setShowVwap(!showVwap)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition ${
+            className={`px-2 py-1 rounded border flex items-center gap-1 transition ${
               showVwap
                 ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
                 : 'bg-slate-950 text-slate-500 border-slate-800'
             }`}
           >
             {showVwap ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            <span>Session VWAP</span>
+            <span>VWAP</span>
           </button>
 
           <button
             onClick={() => setShowProfile(!showProfile)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition ${
+            className={`px-2 py-1 rounded border flex items-center gap-1 transition ${
               showProfile
                 ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
                 : 'bg-slate-950 text-slate-500 border-slate-800'
             }`}
           >
             {showProfile ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            <span>Volume Profile</span>
+            <span className="hidden sm:inline">Volume </span><span>Profile</span>
           </button>
 
           <button
             onClick={() => setShowMAs(!showMAs)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition ${
+            className={`px-2 py-1 rounded border hidden lg:flex items-center gap-1 transition ${
               showMAs
                 ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
                 : 'bg-slate-950 text-slate-500 border-slate-800'
             }`}
           >
             {showMAs ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            <span>MAs (9/50)</span>
+            <span>MAs</span>
           </button>
 
           <button
             onClick={() => setShowGaps(!showGaps)}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition ${
+            className={`px-2 py-1 rounded border hidden lg:flex items-center gap-1 transition ${
               showGaps
                 ? 'bg-orange-500/10 text-orange-300 border-orange-500/30'
                 : 'bg-slate-950 text-slate-500 border-slate-800'
             }`}
           >
             {showGaps ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-            <span>FVG Gaps</span>
+            <span>FVG</span>
           </button>
 
-          {/* Maximize / Minimize Chart and Profile Button */}
+          {/* Maximize / Minimize Chart Button */}
           <button
             onClick={() => setIsMaximized(!isMaximized)}
-            className={`px-3 py-1 rounded border flex items-center gap-1.5 transition font-bold ${
+            className={`px-2.5 py-1 rounded border flex items-center gap-1 transition font-bold ${
               isMaximized
                 ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
                 : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
             }`}
-            title={isMaximized ? 'Minimize Chart (or press Esc)' : 'Maximize Chart and Volume Profile'}
+            title={isMaximized ? 'Exit Maximized (or press Esc)' : 'Maximize Chart'}
           >
             {isMaximized ? (
               <>
                 <Minimize2 className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Minimize</span>
+                <span className="hidden sm:inline">Close</span>
               </>
             ) : (
               <>
                 <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Maximize Chart & Profile</span>
+                <span className="hidden sm:inline">Maximize</span>
               </>
             )}
           </button>
@@ -319,62 +402,44 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
       </div>
 
       {/* Crosshair Inspection & Real-Time Bar Close Strip */}
-      <div className="flex flex-wrap items-center justify-between text-xs font-mono bg-slate-950 p-2.5 rounded border border-slate-800 text-slate-400 gap-3">
-        <div className="flex flex-wrap items-center space-x-3 sm:space-x-4">
+      <div className="flex flex-wrap items-center justify-between text-[11px] sm:text-xs font-mono bg-slate-950 px-2 sm:px-2.5 py-1.5 rounded border border-slate-800 text-slate-400 gap-1.5 sm:gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-x-2.5 sm:gap-x-4">
           <span>
-            DATE:{' '}
-            <span className="text-slate-200">
-              {hoverCandle
-                ? new Date(hoverCandle.timestamp).toLocaleString('en-US', { hour12: false })
-                : 'Hover bar to inspect'}
-            </span>
+            {hoverCandle
+              ? new Date(hoverCandle.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+              : 'Tap/Hover bar'}
           </span>
           <span>
-            O:{' '}
-            <span className="text-slate-200">
-              {hoverCandle ? `$${hoverCandle.open.toFixed(2)}` : '--'}
-            </span>
+            O: <span className="text-slate-200">{hoverCandle ? `$${hoverCandle.open.toFixed(2)}` : '--'}</span>
           </span>
           <span>
-            H:{' '}
-            <span className="text-emerald-400 font-medium">
-              {hoverCandle ? `$${hoverCandle.high.toFixed(2)}` : '--'}
-            </span>
+            H: <span className="text-emerald-400 font-medium">{hoverCandle ? `$${hoverCandle.high.toFixed(2)}` : '--'}</span>
           </span>
           <span>
-            L:{' '}
-            <span className="text-rose-400 font-medium">
-              {hoverCandle ? `$${hoverCandle.low.toFixed(2)}` : '--'}
-            </span>
+            L: <span className="text-rose-400 font-medium">{hoverCandle ? `$${hoverCandle.low.toFixed(2)}` : '--'}</span>
           </span>
           <span>
-            C:{' '}
-            <span className="text-slate-200 font-bold">
-              {hoverCandle ? `$${hoverCandle.close.toFixed(2)}` : `--`}
-            </span>
+            C: <span className="text-slate-200 font-bold">{hoverCandle ? `$${hoverCandle.close.toFixed(2)}` : '--'}</span>
           </span>
-          <span>
-            VOL:{' '}
-            <span className="text-slate-200">
-              {hoverCandle ? hoverCandle.volume.toFixed(2) : '--'}
-            </span>
+          <span className="hidden sm:inline">
+            VOL: <span className="text-slate-200">{hoverCandle ? hoverCandle.volume.toFixed(2) : '--'}</span>
           </span>
         </div>
 
         {/* Live Price & Bar Close Countdown Indicators */}
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
           {/* Live Price Tag with flash animation */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-700">
+          <div className="flex items-center gap-1 sm:gap-1.5 px-2 py-0.5 sm:py-1 rounded bg-slate-900 border border-slate-700">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${
                 isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-cyan-400'
               }`}
             />
-            <span className="text-[10px] text-slate-400 uppercase font-semibold">
-              {isLiveConnected ? 'Live Feed' : 'Spot'}:
+            <span className="text-[9.5px] sm:text-[10px] text-slate-400 uppercase font-semibold">
+              {isLiveConnected ? 'Live' : 'Spot'}:
             </span>
             <span
-              className={`font-bold transition-colors duration-200 ${
+              className={`font-bold transition-colors duration-200 text-xs sm:text-sm ${
                 priceDirection === 'up'
                   ? 'text-emerald-400'
                   : priceDirection === 'down'
@@ -387,35 +452,24 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           </div>
 
           {/* Bar Close Countdown Pill */}
-          <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">
-            <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
-            <span className="text-[10px] text-amber-200 uppercase font-bold">
-              {timeframe} Close:
+          <div className="flex items-center gap-1 sm:gap-1.5 px-2 py-0.5 sm:py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">
+            <Clock className="w-3 h-3 text-amber-400 animate-pulse shrink-0" />
+            <span className="text-[9.5px] sm:text-[10px] text-amber-200 uppercase font-bold">
+              {timeframe}:
             </span>
-            <span className="font-bold text-amber-300 font-mono tracking-wider">
+            <span className="font-bold text-amber-300 font-mono tracking-wider text-xs">
               {countdown.formatted}
-            </span>
-            {/* Progress bar */}
-            <div className="w-10 h-1.5 bg-slate-800 rounded-full overflow-hidden hidden sm:block">
-              <div
-                className="h-full bg-amber-400 rounded-full transition-all duration-1000"
-                style={{ width: `${countdown.progressPct}%` }}
-                title={`${countdown.progressPct.toFixed(0)}% elapsed`}
-              />
-            </div>
-            <span className="text-[9px] text-amber-400/80 hidden md:inline">
-              ({countdown.closesAtUTC})
             </span>
           </div>
         </div>
       </div>
 
       {/* Main SVG Visualization Canvas */}
-      <div className="relative w-full overflow-hidden bg-slate-950 rounded-lg border border-slate-800">
+      <div className={`relative w-full overflow-hidden bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-center ${isMaximized ? 'flex-1 min-h-0' : ''}`}>
         <svg
           viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          className="w-full h-auto select-none"
-          style={{ maxHeight: isMaximized ? 'calc(100vh - 160px)' : '580px' }}
+          className={`w-full ${isMaximized ? 'h-full object-contain' : 'h-auto'} select-none`}
+          style={{ maxHeight: isMaximized ? '100%' : '580px' }}
         >
           <defs>
             <linearGradient id="profileGradientVA" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -972,7 +1026,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                       x={41}
                       y={-8}
                       fill="#38bdf8"
-                      fontSize={8.5}
+                      fontSize={isPortraitMode ? 7.5 : 8.5}
                       fontFamily="monospace"
                       fontWeight="bold"
                       textAnchor="middle"
@@ -983,48 +1037,55 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   </g>
 
                   {/* Live Price Tag Box */}
-                  <rect
-                    x={0}
-                    y={0}
-                    width={82}
-                    height={18}
-                    fill={priceTagBg}
-                    rx={3}
-                  />
-                  <text
-                    x={41}
-                    y={13}
-                    fill="#ffffff"
-                    fontSize={10}
-                    fontFamily="monospace"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                  >
-                    ${livePrice >= 1000 ? Math.round(livePrice).toLocaleString() : livePrice.toFixed(2)}
-                  </text>
+                  {(() => {
+                    const tagWidth = isPortraitMode ? 66 : 82;
+                    return (
+                      <>
+                        <rect
+                          x={0}
+                          y={0}
+                          width={tagWidth}
+                          height={18}
+                          fill={priceTagBg}
+                          rx={3}
+                        />
+                        <text
+                          x={tagWidth / 2}
+                          y={13}
+                          fill="#ffffff"
+                          fontSize={isPortraitMode ? 8.5 : 10}
+                          fontFamily="monospace"
+                          fontWeight="bold"
+                          textAnchor="middle"
+                        >
+                          ${livePrice >= 1000 ? Math.round(livePrice).toLocaleString() : livePrice.toFixed(2)}
+                        </text>
 
-                  {/* Bar Close Countdown Attached Tag */}
-                  <rect
-                    x={0}
-                    y={21}
-                    width={82}
-                    height={16}
-                    fill="#020617"
-                    stroke="#f59e0b"
-                    strokeWidth={1}
-                    rx={3}
-                  />
-                  <text
-                    x={41}
-                    y={33}
-                    fill="#fbbf24"
-                    fontSize={9.5}
-                    fontFamily="monospace"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                  >
-                    ⏱ {countdown.formatted}
-                  </text>
+                        {/* Bar Close Countdown Attached Tag */}
+                        <rect
+                          x={0}
+                          y={21}
+                          width={tagWidth}
+                          height={16}
+                          fill="#020617"
+                          stroke="#f59e0b"
+                          strokeWidth={1}
+                          rx={3}
+                        />
+                        <text
+                          x={tagWidth / 2}
+                          y={33}
+                          fill="#fbbf24"
+                          fontSize={isPortraitMode ? 8 : 9.5}
+                          fontFamily="monospace"
+                          fontWeight="bold"
+                          textAnchor="middle"
+                        >
+                          ⏱ {countdown.formatted}
+                        </text>
+                      </>
+                    );
+                  })()}
                 </g>
               </g>
             );
@@ -1058,14 +1119,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </g>
           )}
 
-          {/* Interactive Mouse Tracking Layer - Smooth hover without gap flickering */}
+          {/* Interactive Mouse & Touch Tracking Layer - Smooth hover & mobile slide */}
           <rect
             x={0}
             y={marginTop}
             width={chartWidth}
             height={chartHeight}
             fill="transparent"
-            className="cursor-crosshair"
+            className="cursor-crosshair touch-none"
             onMouseMove={(e) => {
               const svgEl = e.currentTarget.ownerSVGElement;
               if (!svgEl) return;
@@ -1088,40 +1149,90 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               setHoverX(null);
               setHoverY(null);
             }}
+            onTouchStart={(e) => {
+              if (!e.touches.length) return;
+              const touch = e.touches[0];
+              const svgEl = e.currentTarget.ownerSVGElement;
+              if (!svgEl) return;
+              const pt = svgEl.createSVGPoint();
+              pt.x = touch.clientX;
+              pt.y = touch.clientY;
+              const ctm = svgEl.getScreenCTM();
+              if (!ctm) return;
+              const svgPt = pt.matrixTransform(ctm.inverse());
+              if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
+                const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
+                setHoverCandle(candles[idx]);
+                setHoverX(idx * candleSpacing + candleSpacing / 2);
+                setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+              }
+            }}
+            onTouchMove={(e) => {
+              if (!e.touches.length) return;
+              const touch = e.touches[0];
+              const svgEl = e.currentTarget.ownerSVGElement;
+              if (!svgEl) return;
+              const pt = svgEl.createSVGPoint();
+              pt.x = touch.clientX;
+              pt.y = touch.clientY;
+              const ctm = svgEl.getScreenCTM();
+              if (!ctm) return;
+              const svgPt = pt.matrixTransform(ctm.inverse());
+              if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
+                const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
+                setHoverCandle(candles[idx]);
+                setHoverX(idx * candleSpacing + candleSpacing / 2);
+                setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+              }
+            }}
+            onTouchEnd={() => {
+              setHoverCandle(null);
+              setHoverX(null);
+              setHoverY(null);
+            }}
           />
         </svg>
       </div>
 
-      {/* Profile Metrics Summary Card - Compact */}
-      <div className={`${isMaximized ? 'hidden sm:grid' : 'grid'} grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-xs`}>
-        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[9.5px] block">POC (MAX VOL):</span>
-          <span className="text-amber-400 font-bold text-xs">
-            ${volumeProfile.poc.toLocaleString()}
-          </span>
+      {/* Profile Metrics Summary Bar - Adaptive for Mobile Portrait */}
+      {isMaximized && isPortraitMode ? (
+        <div className="flex items-center justify-between px-2.5 py-1 bg-slate-950 rounded border border-slate-800 text-[10px] font-mono text-slate-300 shrink-0">
+          <div>POC: <span className="text-amber-400 font-bold">${volumeProfile.poc.toLocaleString()}</span></div>
+          <div>VAH: <span className="text-cyan-300 font-bold">${volumeProfile.vah.toLocaleString()}</span></div>
+          <div>VAL: <span className="text-cyan-300 font-bold">${volumeProfile.val.toLocaleString()}</span></div>
+          <div>VWAP: <span className="text-amber-300 font-bold">${sessionVwap.price.toLocaleString()}</span></div>
         </div>
+      ) : (
+        <div className={`${isMaximized ? 'hidden sm:grid' : 'grid'} grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-xs shrink-0`}>
+          <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+            <span className="text-slate-400 text-[9.5px] block">POC (MAX VOL):</span>
+            <span className="text-amber-400 font-bold text-xs">
+              ${volumeProfile.poc.toLocaleString()}
+            </span>
+          </div>
 
-        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[9.5px] block">VAH (VALUE HIGH):</span>
-          <span className="text-cyan-300 font-bold text-xs">
-            ${volumeProfile.vah.toLocaleString()}
-          </span>
-        </div>
+          <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+            <span className="text-slate-400 text-[9.5px] block">VAH (VALUE HIGH):</span>
+            <span className="text-cyan-300 font-bold text-xs">
+              ${volumeProfile.vah.toLocaleString()}
+            </span>
+          </div>
 
-        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[9.5px] block">VAL (VALUE LOW):</span>
-          <span className="text-cyan-300 font-bold text-xs">
-            ${volumeProfile.val.toLocaleString()}
-          </span>
-        </div>
+          <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+            <span className="text-slate-400 text-[9.5px] block">VAL (VALUE LOW):</span>
+            <span className="text-cyan-300 font-bold text-xs">
+              ${volumeProfile.val.toLocaleString()}
+            </span>
+          </div>
 
-        <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
-          <span className="text-slate-400 text-[9.5px] block">SESSION VWAP:</span>
-          <span className="text-amber-300 font-bold text-xs">
-            ${sessionVwap.price.toLocaleString()}
-          </span>
+          <div className={`p-2 bg-slate-950 rounded border border-slate-800 ${isMaximized ? 'hidden sm:block' : ''}`}>
+            <span className="text-slate-400 text-[9.5px] block">SESSION VWAP:</span>
+            <span className="text-amber-300 font-bold text-xs">
+              ${sessionVwap.price.toLocaleString()}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

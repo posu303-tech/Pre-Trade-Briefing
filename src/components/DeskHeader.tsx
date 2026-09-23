@@ -68,10 +68,23 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
     setTimeout(() => setCopied(null), 2500);
   };
 
+  const formatHeaderPrice = (price: number) => {
+    if (price < 0.1) return price.toFixed(5);
+    if (price < 1) return price.toFixed(4);
+    if (price < 10) return price.toFixed(3);
+    if (price >= 1000) {
+      return price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    return price.toFixed(2);
+  };
+
   const tickers: { key: TickerSymbol; label: string }[] = [
     { key: 'BTC-USD', label: 'BTC' },
     { key: 'ETH-USD', label: 'ETH' },
     { key: 'SOL-USD', label: 'SOL' },
+    { key: 'XRP-USD', label: 'XRP' },
+    { key: 'DOGE-USD', label: 'DOGE' },
+    { key: 'HYPE-USD', label: 'HYPE' },
     { key: 'XAUT-USD', label: 'XAUT' },
   ];
 
@@ -119,9 +132,7 @@ export const DeskHeader: React.FC<DeskHeaderProps> = ({
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-950 border border-slate-800 font-mono">
               <span className="text-[10px] text-slate-400">SPOT:</span>
               <span className="text-xs font-bold text-white">
-                ${brief.currentPrice >= 1000
-                  ? brief.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                  : brief.currentPrice.toFixed(2)}
+                ${formatHeaderPrice(brief.currentPrice)}
               </span>
             </div>
           )}

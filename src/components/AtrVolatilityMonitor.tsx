@@ -23,6 +23,9 @@ const DEFAULT_THRESHOLDS: Record<TickerSymbol, number> = {
   'ETH-USD': 1.0,  // 1.00% of spot price
   'SOL-USD': 1.3,  // 1.30% of spot price
   'XAUT-USD': 0.35, // 0.35% of spot price (Gold has lower % volatility)
+  'XRP-USD': 1.4,  // 1.40% of spot price
+  'DOGE-USD': 1.6, // 1.60% of spot price
+  'HYPE-USD': 1.5, // 1.50% of spot price
 };
 
 export const AtrVolatilityMonitor: React.FC<AtrVolatilityMonitorProps> = ({ brief }) => {

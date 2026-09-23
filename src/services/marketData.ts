@@ -27,6 +27,9 @@ const BINANCE_PAIR_MAP: Record<TickerSymbol, string> = {
   'ETH-USD': 'ETHUSDT',
   'SOL-USD': 'SOLUSDT',
   'XAUT-USD': 'PAXGUSDT',
+  'XRP-USD': 'XRPUSDT',
+  'DOGE-USD': 'DOGEUSDT',
+  'HYPE-USD': 'HYPEUSDT',
 };
 
 // Fallback seed generator if offline or rate limited (provides 30 full daily candles, 48 hourly, 48 15m, 48 5m)
@@ -43,12 +46,27 @@ function getFallbackCandles(symbol: TickerSymbol): {
       ? 2480
       : symbol === 'SOL-USD'
       ? 142
-      : 4310;
+      : symbol === 'XAUT-USD'
+      ? 4310
+      : symbol === 'XRP-USD'
+      ? 1.62
+      : symbol === 'DOGE-USD'
+      ? 0.102
+      : 97.2;
   const now = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
   const hourMs = 60 * 60 * 1000;
   const fifteenMs = 15 * 60 * 1000;
   const fiveMs = 5 * 60 * 1000;
+
+  const baseVolFactor =
+    basePrice > 10000
+      ? 12000
+      : basePrice > 100
+      ? 80000
+      : basePrice > 1
+      ? 8500000
+      : 85000000;
 
   // Generate 60 completed daily candles for genuine moving average volume and historical context
   const daily: Candle[] = [];
@@ -56,8 +74,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   for (let i = 59; i >= 0; i--) {
     const time = now - i * dayMs;
-    const vol =
-      (basePrice > 10000 ? 12000 : 80000) * (0.85 + Math.sin(i * 0.4) * 0.25);
+    const vol = baseVolFactor * (0.85 + Math.sin(i * 0.4) * 0.25);
     const range = prevClose * 0.022;
     const open = prevClose;
     const high = open + Math.abs(Math.cos(i) * range);
@@ -79,6 +96,15 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   const hourly: Candle[] = [];
   let hClose = daily[daily.length - 2].close;
+  const hourlyVolFactor =
+    basePrice > 10000
+      ? 800
+      : basePrice > 100
+      ? 5000
+      : basePrice > 1
+      ? 550000
+      : 5500000;
+
   for (let h = 80; h >= 0; h--) {
     const time = now - h * hourMs;
     const hRange = hClose * 0.007;
@@ -86,8 +112,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
     const high = open + Math.abs(Math.sin(h * 0.7) * hRange);
     const low = open - Math.abs(Math.cos(h * 0.7) * hRange);
     const close = (open + high + low) / 3;
-    const vol =
-      (basePrice > 10000 ? 800 : 5000) * (0.65 + Math.cos(h * 0.3) * 0.35);
+    const vol = hourlyVolFactor * (0.65 + Math.cos(h * 0.3) * 0.35);
     hourly.push({
       timestamp: time,
       open,
@@ -103,6 +128,15 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   const fifteenMin: Candle[] = [];
   let m15Close = hourly[hourly.length - 1].close;
+  const m15VolFactor =
+    basePrice > 10000
+      ? 250
+      : basePrice > 100
+      ? 1500
+      : basePrice > 1
+      ? 180000
+      : 1800000;
+
   for (let m = 80; m >= 0; m--) {
     const time = now - m * fifteenMs;
     const mRange = m15Close * 0.0035;
@@ -110,8 +144,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
     const high = open + Math.abs(Math.sin(m * 0.85) * mRange);
     const low = open - Math.abs(Math.cos(m * 0.85) * mRange);
     const close = (open + high + low) / 3;
-    const vol =
-      (basePrice > 10000 ? 250 : 1500) * (0.7 + Math.sin(m * 0.5) * 0.3);
+    const vol = m15VolFactor * (0.7 + Math.sin(m * 0.5) * 0.3);
     fifteenMin.push({
       timestamp: time,
       open,
@@ -127,6 +160,15 @@ function getFallbackCandles(symbol: TickerSymbol): {
 
   const fiveMin: Candle[] = [];
   let m5Close = fifteenMin[fifteenMin.length - 1].close;
+  const m5VolFactor =
+    basePrice > 10000
+      ? 90
+      : basePrice > 100
+      ? 600
+      : basePrice > 1
+      ? 60000
+      : 600000;
+
   for (let m = 80; m >= 0; m--) {
     const time = now - m * fiveMs;
     const mRange = m5Close * 0.002;
@@ -134,8 +176,7 @@ function getFallbackCandles(symbol: TickerSymbol): {
     const high = open + Math.abs(Math.sin(m * 1.2) * mRange);
     const low = open - Math.abs(Math.cos(m * 1.2) * mRange);
     const close = (open + high + low) / 3;
-    const vol =
-      (basePrice > 10000 ? 90 : 600) * (0.6 + Math.cos(m * 0.4) * 0.4);
+    const vol = m5VolFactor * (0.6 + Math.cos(m * 0.4) * 0.4);
     fiveMin.push({
       timestamp: time,
       open,
@@ -401,24 +442,27 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
       }
     }
 
-    // BTC, ETH, or SOL from Binance
+    // Standard Binance Spot for BTC, ETH, SOL, XRP, DOGE, or Binance USDⓈ-M Futures for HYPE
+    const isFutures = symbol === 'HYPE-USD';
+    const baseUrl = isFutures ? 'https://fapi.binance.com/fapi/v1' : 'https://api.binance.com/api/v3';
+    dataSource = isFutures ? 'Binance Futures REST v1' : 'Binance Public REST v3';
     const binancePair = BINANCE_PAIR_MAP[symbol] || 'BTCUSDT';
 
     const [klineRes, tickerRes, hourRes, fifteenRes, fiveRes] = await Promise.all([
       fetchWithTimeout(
-        `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1d&limit=30`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=1d&limit=30`
       ),
       fetchWithTimeout(
-        `https://api.binance.com/api/v3/ticker/24hr?symbol=${binancePair}`
+        `${baseUrl}/ticker/24hr?symbol=${binancePair}`
       ),
       fetchWithTimeout(
-        `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=1h&limit=48`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=1h&limit=48`
       ),
       fetchWithTimeout(
-        `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=15m&limit=48`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=15m&limit=48`
       ).catch(() => null),
       fetchWithTimeout(
-        `https://api.binance.com/api/v3/klines?symbol=${binancePair}&interval=5m&limit=48`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=5m&limit=48`
       ).catch(() => null),
     ]);
 

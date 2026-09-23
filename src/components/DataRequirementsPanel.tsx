@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   ArrowDownRight,
   ArrowUpDown,
@@ -13,13 +14,29 @@ import {
   Copy,
   DollarSign,
   Download,
+  Flame,
   Layers,
   Percent,
+  Radio,
   Sliders,
   TrendingDown,
   TrendingUp,
+  Wifi,
 } from 'lucide-react';
 import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
+import { useLiveTicker } from '../services/useLiveTicker';
+
+export const formatPrice = (val: number | undefined | null): string => {
+  if (val === undefined || val === null || isNaN(val)) return '--';
+  const p = Math.abs(val);
+  if (p === 0) return '0.00';
+  if (p < 0.001) return val.toFixed(6);
+  if (p < 0.1) return val.toFixed(5);
+  if (p < 1) return val.toFixed(4);
+  if (p < 10) return val.toFixed(3);
+  if (p >= 1000) return val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return val.toFixed(2);
+};
 
 interface DataRequirementsPanelProps {
   brief: PreMarketBrief;
@@ -49,6 +66,15 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
   const [selectedTimeframe, setSelectedTimeframe] = useState<ChartTimeframe>('15m');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [copiedCsv, setCopiedCsv] = useState(false);
+
+  // Live WebSocket price feed for real-time audit verification
+  const { livePrice, priceDirection, isLiveConnected, countdown } = useLiveTicker(
+    symbol,
+    currentPrice,
+    selectedTimeframe
+  );
+
+  const activeLivePrice = livePrice > 0 ? livePrice : currentPrice;
 
   // Dynamic candle population corresponding to selected timeframe
   const sessionCandles = useMemo(() => {
@@ -236,6 +262,76 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
             ? `Granular intraday session bars for ${symbol}. Select any timeframe (5m, 15m, 1H, 1D) below to dynamically populate all metrics, candle OHLCV ranges, and VWAP calculations.`
             : 'Strict desk protocol requires confirming the 6 core quantitative inputs prior to running intraday trade models. If any dataset is estimated or unavailable, it is explicitly flagged below.'}
         </p>
+
+        {/* Real-Time Live Price Audit Strip */}
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 p-3 rounded-xl border border-cyan-500/25">
+          <div className="flex items-center flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span
+                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    isLiveConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                    isLiveConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+              </span>
+              <span className="text-[11px] font-bold tracking-wider text-slate-400 uppercase">
+                Audit Price Feed:
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                  isLiveConnected
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                }`}
+              >
+                {isLiveConnected ? 'LIVE FEED' : 'STREAM CONNECTING'}
+              </span>
+            </div>
+
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs text-slate-400">LIVE SPOT:</span>
+              <span
+                className={`text-xl font-mono font-bold tracking-tight transition-colors duration-200 ${
+                  priceDirection === 'up'
+                    ? 'text-emerald-400'
+                    : priceDirection === 'down'
+                    ? 'text-rose-400'
+                    : 'text-white'
+                }`}
+              >
+                ${formatPrice(activeLivePrice)}
+              </span>
+              <span
+                className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded ${
+                  preMarket.change24hPercent >= 0
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                }`}
+              >
+                {preMarket.change24hPercent >= 0 ? '+' : ''}
+                {preMarket.change24hPercent.toFixed(2)}% (24H)
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] text-slate-400">
+            <div>
+              <span className="text-slate-500 mr-1">24H HIGH / LOW:</span>
+              <span className="text-slate-200 font-mono">
+                ${formatPrice(preMarket.high24h)} / ${formatPrice(preMarket.low24h)}
+              </span>
+            </div>
+            <div className="hidden sm:block border-l border-slate-800 pl-3">
+              <span className="text-slate-500 mr-1">NEXT BAR ({selectedTimeframe}):</span>
+              <span className="text-amber-300 font-mono font-bold">{countdown.formatted}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ======================================================== */}
@@ -326,7 +422,50 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
           </div>
 
           {/* Aggregate Session Stats Cards for Selected Timeframe */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+            {/* Live Spot Price Card */}
+            <div className="bg-slate-900 border border-cyan-500/40 rounded-xl p-3 shadow-sm relative overflow-hidden">
+              <div className="flex items-center justify-between">
+                <span className="text-cyan-400 text-[10px] font-bold flex items-center gap-1">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                    }`}
+                  />
+                  LIVE SPOT:
+                </span>
+                <span
+                  className={`text-[9px] font-bold px-1 rounded ${
+                    priceDirection === 'up'
+                      ? 'text-emerald-400 bg-emerald-500/10'
+                      : priceDirection === 'down'
+                      ? 'text-rose-400 bg-rose-500/10'
+                      : 'text-slate-400 bg-slate-800'
+                  }`}
+                >
+                  {priceDirection === 'up' ? '▲ Up' : priceDirection === 'down' ? '▼ Down' : '● Live'}
+                </span>
+              </div>
+              <span
+                className={`font-bold text-sm block mt-0.5 font-mono ${
+                  priceDirection === 'up'
+                    ? 'text-emerald-300'
+                    : priceDirection === 'down'
+                    ? 'text-rose-300'
+                    : 'text-white'
+                }`}
+              >
+                ${formatPrice(activeLivePrice)}
+              </span>
+              <span className="text-[10px] text-slate-400 block mt-0.5 truncate">
+                24H:{' '}
+                <strong className={preMarket.change24hPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                  {preMarket.change24hPercent >= 0 ? '+' : ''}
+                  {preMarket.change24hPercent.toFixed(2)}%
+                </strong>
+              </span>
+            </div>
+
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
               <span className="text-slate-400 text-[10px] block">TIMEFRAME BARS:</span>
               <span className="text-white font-bold text-sm">{sessionStats.count} Bars</span>
@@ -335,24 +474,24 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
               <span className="text-slate-400 text-[10px] block">SESSION HIGH:</span>
-              <span className="text-emerald-400 font-bold text-sm">
-                ${sessionStats.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-emerald-400 font-bold text-sm font-mono">
+                ${formatPrice(sessionStats.high)}
               </span>
               <span className="text-[10px] text-slate-400 block mt-0.5">Peak in timeframe</span>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
               <span className="text-slate-400 text-[10px] block">SESSION LOW:</span>
-              <span className="text-rose-400 font-bold text-sm">
-                ${sessionStats.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-rose-400 font-bold text-sm font-mono">
+                ${formatPrice(sessionStats.low)}
               </span>
               <span className="text-[10px] text-slate-400 block mt-0.5">Trough in timeframe</span>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
               <span className="text-slate-400 text-[10px] block">TOTAL RANGE:</span>
-              <span className="text-amber-300 font-bold text-sm">
-                ${sessionStats.range.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-amber-300 font-bold text-sm font-mono">
+                ${formatPrice(sessionStats.range)}
               </span>
               <span className="text-[10px] text-amber-400/80 block mt-0.5">
                 {sessionStats.rangePerc.toFixed(2)}% of Open
@@ -361,8 +500,8 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
 
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
               <span className="text-slate-400 text-[10px] block">TIMEFRAME VWAP:</span>
-              <span className="text-amber-400 font-bold text-sm">
-                ${sessionStats.vwap.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-amber-400 font-bold text-sm font-mono">
+                ${formatPrice(sessionStats.vwap)}
               </span>
               <span className="text-[10px] text-slate-400 block mt-0.5">Volume-weighted typical</span>
             </div>
@@ -370,14 +509,16 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
               <span className="text-slate-400 text-[10px] block">NET TIMEFRAME CHANGE:</span>
               <span
-                className={`font-bold text-sm flex items-center gap-1 ${
+                className={`font-bold text-sm flex items-center gap-1 font-mono ${
                   sessionStats.netChange >= 0 ? 'text-emerald-400' : 'text-rose-400'
                 }`}
               >
                 {sessionStats.netChange >= 0 ? '+' : ''}
-                ${sessionStats.netChange.toFixed(2)} ({sessionStats.netChangePerc.toFixed(2)}%)
+                ${formatPrice(sessionStats.netChange)} ({sessionStats.netChangePerc.toFixed(2)}%)
               </span>
-              <span className="text-[10px] text-slate-400 block mt-0.5">Avg bar range: ${sessionStats.avgRange.toFixed(2)}</span>
+              <span className="text-[10px] text-slate-400 block mt-0.5">
+                Avg bar: ${formatPrice(sessionStats.avgRange)}
+              </span>
             </div>
           </div>
 
@@ -419,16 +560,19 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {sessionCandles.map((c, idx) => {
-                    const range = c.high - c.low;
-                    const rangePerc = c.open > 0 ? (range / c.open) * 100 : 0;
-                    const isGreen = c.close >= c.open;
-                    const changeVal = c.close - c.open;
-                    const changePerc = c.open > 0 ? (changeVal / c.open) * 100 : 0;
-                    const quoteVol = c.quoteVolume || c.volume * c.close;
-                    const barVwap = c.vwap || (c.high + c.low + c.close) / 3;
-
                     // Latest bar check
                     const isLatest = sortOrder === 'newest' ? idx === 0 : idx === sessionCandles.length - 1;
+                    const effectiveClose = isLatest ? activeLivePrice : c.close;
+                    const effectiveHigh = isLatest ? Math.max(c.high, activeLivePrice) : c.high;
+                    const effectiveLow = isLatest ? Math.min(c.low, activeLivePrice) : c.low;
+
+                    const range = effectiveHigh - effectiveLow;
+                    const rangePerc = c.open > 0 ? (range / c.open) * 100 : 0;
+                    const isGreen = effectiveClose >= c.open;
+                    const changeVal = effectiveClose - c.open;
+                    const changePerc = c.open > 0 ? (changeVal / c.open) * 100 : 0;
+                    const quoteVol = c.quoteVolume || c.volume * effectiveClose;
+                    const barVwap = c.vwap || (effectiveHigh + effectiveLow + effectiveClose) / 3;
 
                     const dateObj = new Date(c.timestamp);
                     const utcStr = dateObj.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
@@ -459,19 +603,29 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                           {localTimeStr}
                         </td>
                         <td className="py-2 px-3 text-right text-slate-300 font-mono">
-                          ${c.open.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${formatPrice(c.open)}
                         </td>
                         <td className="py-2 px-3 text-right text-emerald-400 font-medium font-mono">
-                          ${c.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${formatPrice(effectiveHigh)}
                         </td>
                         <td className="py-2 px-3 text-right text-rose-400 font-medium font-mono">
-                          ${c.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${formatPrice(effectiveLow)}
                         </td>
-                        <td className={`py-2 px-3 text-right font-bold font-mono ${isGreen ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          ${c.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <td
+                          className={`py-2 px-3 text-right font-bold font-mono transition-colors duration-200 ${
+                            isGreen ? 'text-emerald-400' : 'text-rose-400'
+                          } ${
+                            isLatest && priceDirection === 'up'
+                              ? 'text-emerald-300'
+                              : isLatest && priceDirection === 'down'
+                              ? 'text-rose-300'
+                              : ''
+                          }`}
+                        >
+                          ${formatPrice(effectiveClose)}
                         </td>
                         <td className="py-2 px-3 text-right text-slate-300 font-mono">
-                          ${range.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${formatPrice(range)}
                         </td>
                         <td className="py-2 px-3 text-right text-amber-300/90 font-mono">
                           {rangePerc.toFixed(2)}%
@@ -483,7 +637,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                           ${quoteVol.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </td>
                         <td className="py-2 px-3 text-right text-amber-300 font-mono">
-                          ${barVwap.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${formatPrice(barVwap)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
                           <span
@@ -499,7 +653,12 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         </td>
                         <td className="py-2 px-3 text-center">
                           {isLatest ? (
-                            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] border border-cyan-500/30 animate-pulse">
+                            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] border border-cyan-500/30 flex items-center justify-center gap-1 mx-auto w-fit">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                                }`}
+                              />
                               LIVE BAR
                             </span>
                           ) : (
@@ -570,26 +729,26 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     <td className="py-2 px-3 text-slate-200">
                       {dateStr} {isLatest && <span className="text-cyan-400 text-[10px] ml-1">(Active)</span>}
                     </td>
-                    <td className="py-2 px-3 text-right text-slate-300">
-                      ${c.open.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="py-2 px-3 text-right text-slate-300 font-mono">
+                      ${formatPrice(c.open)}
                     </td>
-                    <td className="py-2 px-3 text-right text-emerald-400 font-medium">
-                      ${c.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="py-2 px-3 text-right text-emerald-400 font-medium font-mono">
+                      ${formatPrice(c.high)}
                     </td>
-                    <td className="py-2 px-3 text-right text-rose-400 font-medium">
-                      ${c.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="py-2 px-3 text-right text-rose-400 font-medium font-mono">
+                      ${formatPrice(c.low)}
                     </td>
-                    <td className={`py-2 px-3 text-right font-bold ${isGreen ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      ${c.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className={`py-2 px-3 text-right font-bold font-mono ${isGreen ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      ${formatPrice(isLatest ? activeLivePrice : c.close)}
                     </td>
-                    <td className="py-2 px-3 text-right text-slate-400">
-                      ${range.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="py-2 px-3 text-right text-slate-400 font-mono">
+                      ${formatPrice(range)}
                     </td>
-                    <td className="py-2 px-3 text-right text-slate-300">
+                    <td className="py-2 px-3 text-right text-slate-300 font-mono">
                       {c.volume.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </td>
-                    <td className="py-2 px-3 text-right text-amber-300">
-                      ${(c.vwap || (c.high + c.low + c.close) / 3).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className="py-2 px-3 text-right text-amber-300 font-mono">
+                      ${formatPrice(c.vwap || (c.high + c.low + c.close) / 3)}
                     </td>
                   </tr>
                 );
@@ -618,26 +777,26 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-950 p-3 rounded border border-slate-800">
               <span className="text-slate-400 text-[11px] block">PRIOR OPEN:</span>
-              <span className="text-slate-200 font-bold text-sm">
-                ${priorDay.open.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-slate-200 font-bold text-sm font-mono">
+                ${formatPrice(priorDay.open)}
               </span>
             </div>
             <div className="bg-slate-950 p-3 rounded border border-slate-800">
               <span className="text-slate-400 text-[11px] block">PRIOR HIGH (PDH):</span>
-              <span className="text-emerald-400 font-bold text-sm">
-                ${priorDay.high.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-emerald-400 font-bold text-sm font-mono">
+                ${formatPrice(priorDay.high)}
               </span>
             </div>
             <div className="bg-slate-950 p-3 rounded border border-slate-800">
               <span className="text-slate-400 text-[11px] block">PRIOR LOW (PDL):</span>
-              <span className="text-rose-400 font-bold text-sm">
-                ${priorDay.low.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-rose-400 font-bold text-sm font-mono">
+                ${formatPrice(priorDay.low)}
               </span>
             </div>
             <div className="bg-slate-950 p-3 rounded border border-slate-800">
               <span className="text-slate-400 text-[11px] block">PRIOR CLOSE (PDC):</span>
-              <span className="text-white font-bold text-sm">
-                ${priorDay.close.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span className="text-white font-bold text-sm font-mono">
+                ${formatPrice(priorDay.close)}
               </span>
             </div>
           </div>
@@ -647,8 +806,8 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
               <span className="text-amber-300 font-semibold text-xs block">PRIOR DAY VWAP:</span>
               <span className="text-[11px] text-slate-400">Volume-weighted typical price across prior 24h</span>
             </div>
-            <span className="text-amber-300 font-bold text-base">
-              ${priorDay.vwap.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-amber-300 font-bold text-base font-mono">
+              ${formatPrice(priorDay.vwap)}
             </span>
           </div>
         </section>
@@ -670,10 +829,25 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
           </div>
 
           <div className="space-y-3">
-            <div className="flex justify-between items-center bg-slate-950 p-2.5 rounded border border-slate-800">
-              <span className="text-slate-400">Current Pre-Market Price:</span>
-              <span className="text-white font-bold text-sm">
-                ${preMarket.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div className="flex justify-between items-center bg-slate-950 p-2.5 rounded border border-cyan-500/30">
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                  }`}
+                />
+                Live Asset Price:
+              </span>
+              <span
+                className={`font-bold text-sm font-mono transition-colors duration-200 ${
+                  priceDirection === 'up'
+                    ? 'text-emerald-300'
+                    : priceDirection === 'down'
+                    ? 'text-rose-300'
+                    : 'text-white'
+                }`}
+              >
+                ${formatPrice(activeLivePrice)}
               </span>
             </div>
 
@@ -726,27 +900,30 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-slate-950 p-3 rounded border border-slate-800">
             <span className="text-slate-400 text-[11px] block">OVERNIGHT HIGH (ONH):</span>
-            <span className="text-emerald-400 font-bold text-base">
-              ${preMarket.overnightHigh.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-emerald-400 font-bold text-base font-mono">
+              ${formatPrice(preMarket.overnightHigh)}
             </span>
             <span className="text-[10px] text-slate-400 block mt-0.5">Top of liquidity sweep buffer</span>
           </div>
 
           <div className="bg-slate-950 p-3 rounded border border-slate-800">
             <span className="text-slate-400 text-[11px] block">OVERNIGHT LOW (ONL):</span>
-            <span className="text-rose-400 font-bold text-base">
-              ${preMarket.overnightLow.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-rose-400 font-bold text-base font-mono">
+              ${formatPrice(preMarket.overnightLow)}
             </span>
             <span className="text-[10px] text-slate-400 block mt-0.5">Base of overnight order flow</span>
           </div>
 
           <div className="bg-slate-950 p-3 rounded border border-slate-800">
             <span className="text-slate-400 text-[11px] block">OVERNIGHT SPREAD / RANGE:</span>
-            <span className="text-cyan-300 font-bold text-base">
-              ${(preMarket.overnightHigh - preMarket.overnightLow).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-cyan-300 font-bold text-base font-mono">
+              ${formatPrice(preMarket.overnightHigh - preMarket.overnightLow)}
             </span>
             <span className="text-[10px] text-slate-400 block mt-0.5">
-              {(((preMarket.overnightHigh - preMarket.overnightLow) / preMarket.currentPrice) * 100).toFixed(2)}% of asset price
+              {preMarket.currentPrice > 0
+                ? (((preMarket.overnightHigh - preMarket.overnightLow) / preMarket.currentPrice) * 100).toFixed(2)
+                : '0.00'}
+              % of asset price
             </span>
           </div>
         </div>
@@ -864,8 +1041,8 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
               </div>
               <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
                 <span className="text-slate-400 text-[10px] block">MAX PAIN STRIKE:</span>
-                <span className="text-amber-300 font-bold text-xs">
-                  {options.maxPainStrike ? `$${options.maxPainStrike.toLocaleString()}` : 'N/A'}
+                <span className="text-amber-300 font-bold text-xs font-mono">
+                  {options.maxPainStrike ? `$${formatPrice(options.maxPainStrike)}` : 'N/A'}
                 </span>
               </div>
               <div className="bg-slate-950 p-2.5 rounded border border-slate-800">

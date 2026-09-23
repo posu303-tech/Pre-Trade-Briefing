@@ -1,4 +1,11 @@
-export type TickerSymbol = 'BTC-USD' | 'ETH-USD' | 'SOL-USD' | 'XAUT-USD';
+export type TickerSymbol =
+  | 'BTC-USD'
+  | 'ETH-USD'
+  | 'SOL-USD'
+  | 'XAUT-USD'
+  | 'XRP-USD'
+  | 'DOGE-USD'
+  | 'HYPE-USD';
 
 export type TradingSession = 'ALL' | 'ASIAN' | 'EUROPEAN' | 'US';
 

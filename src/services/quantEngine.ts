@@ -70,6 +70,16 @@ export function computePriorDayStats(dailyCandles: Candle[], hourlyCandles: Cand
   };
 }
 
+export function roundPrice(val: number, refPrice?: number): number {
+  const p = Math.abs(refPrice !== undefined ? refPrice : val);
+  if (p === 0) return 0;
+  if (p < 0.01) return Number(val.toFixed(6));
+  if (p < 0.1) return Number(val.toFixed(5));
+  if (p < 1) return Number(val.toFixed(4));
+  if (p < 10) return Number(val.toFixed(3));
+  return Number(val.toFixed(2));
+}
+
 export function computeFloorPivots(priorDay: PriorDayStats): PivotPoints {
   const { high: H, low: L, close: C } = priorDay;
   const pivot = (H + L + C) / 3;
@@ -81,13 +91,13 @@ export function computeFloorPivots(priorDay: PriorDayStats): PivotPoints {
   const s3 = L - 2 * (H - pivot);
 
   return {
-    pivot: Number(pivot.toFixed(2)),
-    r1: Number(r1.toFixed(2)),
-    r2: Number(r2.toFixed(2)),
-    r3: Number(r3.toFixed(2)),
-    s1: Number(s1.toFixed(2)),
-    s2: Number(s2.toFixed(2)),
-    s3: Number(s3.toFixed(2))
+    pivot: roundPrice(pivot, C),
+    r1: roundPrice(r1, C),
+    r2: roundPrice(r2, C),
+    r3: roundPrice(r3, C),
+    s1: roundPrice(s1, C),
+    s2: roundPrice(s2, C),
+    s3: roundPrice(s3, C)
   };
 }
 
@@ -194,9 +204,9 @@ export function computeVolumeProfile(hourlyCandles: Candle[], lookbackDays = 10)
 
   return {
     lookbackSessions: lookbackDays,
-    poc: Number(pocPrice.toFixed(2)),
-    vah: Number(vah.toFixed(2)),
-    val: Number(val.toFixed(2)),
+    poc: roundPrice(pocPrice),
+    vah: roundPrice(vah),
+    val: roundPrice(val),
     totalVolume: Number(totalVolume.toFixed(2)),
     valueAreaVolume: Number(vaVolume.toFixed(2)),
     bins
@@ -244,7 +254,7 @@ export function computeMovingAverages(dailyCandles: Candle[], currentPrice: numb
     results.push({
       period: ma.period,
       type: ma.type,
-      value: Number(ma.value.toFixed(2)),
+      value: roundPrice(ma.value, currentPrice),
       isPriceAbove,
       distancePercent: Number(distancePercent.toFixed(2))
     });
@@ -290,10 +300,12 @@ export function computeATR(dailyCandles: Candle[], hourlyCandles: Candle[]): ATR
   else if (ratio <= 1.75) regime = 'EXPANDED';
   else regime = 'EXTREME';
 
+  const refPrice = dailyCandles[dailyCandles.length - 1]?.close || 100;
+
   return {
-    atr14Daily: Number(atr14Daily.toFixed(2)),
-    atr14Hourly: Number(atr14Hourly.toFixed(2)),
-    atr20DailyAvg: Number(atr20DailyAvg.toFixed(2)),
+    atr14Daily: roundPrice(atr14Daily, refPrice),
+    atr14Hourly: roundPrice(atr14Hourly, refPrice),
+    atr20DailyAvg: roundPrice(atr20DailyAvg, refPrice),
     atrRatioTo20d: Number(ratio.toFixed(2)),
     volatilityRegime: regime
   };
@@ -347,14 +359,14 @@ export function computeFibonacci(dailyCandles: Candle[]): FibonacciData {
     return {
       level: r.level,
       label: r.label,
-      price: Number(price.toFixed(2))
+      price: roundPrice(price, swingHigh)
     };
   });
 
   return {
-    swingHigh: Number(swingHigh.toFixed(2)),
+    swingHigh: roundPrice(swingHigh),
     swingHighDate,
-    swingLow: Number(swingLow.toFixed(2)),
+    swingLow: roundPrice(swingLow),
     swingLowDate,
     swingDirection,
     levels
@@ -500,9 +512,9 @@ export function computeSessionVWAP(hourlyCandles: Candle[], session: TradingSess
   const sigma = variance > 0 ? variance : currentPrice * 0.008;
 
   return {
-    price: Number(vwap.toFixed(2)),
-    upper1Sigma: Number((vwap + sigma).toFixed(2)),
-    lower1Sigma: Number((vwap - sigma).toFixed(2)),
+    price: roundPrice(vwap),
+    upper1Sigma: roundPrice(vwap + sigma),
+    lower1Sigma: roundPrice(vwap - sigma),
     anchorDescription: anchorDesc
   };
 }
@@ -545,9 +557,9 @@ export function computePreMarketData(
     volume24h,
     avgVolume20d: Number(avgVolume20d.toFixed(2)),
     volumeRatio20d,
-    overnightHigh: Number(overnightHigh.toFixed(2)),
-    overnightLow: Number(overnightLow.toFixed(2)),
-    sessionOpenPrice: Number(sessionOpenPrice.toFixed(2))
+    overnightHigh: roundPrice(overnightHigh),
+    overnightLow: roundPrice(overnightLow),
+    sessionOpenPrice: roundPrice(sessionOpenPrice)
   };
 }
 

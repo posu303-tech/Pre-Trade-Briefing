@@ -125,15 +125,18 @@ export function useLiveTicker(
 
   // Real-time price stream via WebSocket (or fallback)
   useEffect(() => {
-    const symbolMap: Record<string, string> = {
+    const symbolMap: Record<TickerSymbol, string> = {
       'BTC-USD': 'btcusdt',
       'ETH-USD': 'ethusdt',
       'SOL-USD': 'solusdt',
-      // Gold is tracked on Binance via the PAXG pair (XAUT itself isn't listed there).
       'XAUT-USD': 'paxgusdt',
+      'XRP-USD': 'xrpusdt',
+      'DOGE-USD': 'dogeusdt',
+      'HYPE-USD': 'hypeusdt',
     };
 
     const streamPair = symbolMap[symbol];
+    const isFutures = symbol === 'HYPE-USD';
     let ws: WebSocket | null = null;
     let pollTimer: any = null;
 
@@ -160,7 +163,9 @@ export function useLiveTicker(
 
     if (streamPair && typeof WebSocket !== 'undefined') {
       try {
-        const wsUrl = `wss://stream.binance.com:9443/ws/${streamPair}@ticker`;
+        const wsUrl = isFutures
+          ? `wss://fstream.binance.com/ws/${streamPair}@ticker`
+          : `wss://stream.binance.com:9443/ws/${streamPair}@ticker`;
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
@@ -203,6 +208,16 @@ export function useLiveTicker(
             const data = await res.json();
             if (Array.isArray(data) && data[6]) {
               handlePriceUpdate(data[6]);
+              setIsLiveConnected(true);
+              return;
+            }
+          }
+        } else if (isFutures) {
+          const res = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${streamPair.toUpperCase()}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.price) {
+              handlePriceUpdate(parseFloat(data.price));
               setIsLiveConnected(true);
               return;
             }

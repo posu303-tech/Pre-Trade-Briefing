@@ -534,7 +534,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                 </h3>
               </div>
               <span className="text-slate-400 text-[11px]">
-                Showing all OHLCV columns, Range ($ & %), Volume, Dollar Volume, Bar VWAP, and Direction
+                Showing Open, Close, Range ($ & %), Volume, Bar VWAP, and Direction
               </span>
             </div>
 
@@ -544,15 +544,11 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                   <tr className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                     <th className="py-2.5 px-3">#</th>
                     <th className="py-2.5 px-3">Time (UTC)</th>
-                    <th className="py-2.5 px-3">Time (Local)</th>
                     <th className="py-2.5 px-3 text-right">Open ($)</th>
-                    <th className="py-2.5 px-3 text-right">High ($)</th>
-                    <th className="py-2.5 px-3 text-right">Low ($)</th>
                     <th className="py-2.5 px-3 text-right">Close ($)</th>
                     <th className="py-2.5 px-3 text-right">Range ($)</th>
                     <th className="py-2.5 px-3 text-right">Range (%)</th>
                     <th className="py-2.5 px-3 text-right">Volume</th>
-                    <th className="py-2.5 px-3 text-right">Dollar Volume ($)</th>
                     <th className="py-2.5 px-3 text-right">Bar VWAP ($)</th>
                     <th className="py-2.5 px-3 text-right">Change (%)</th>
                     <th className="py-2.5 px-3 text-center">Status</th>
@@ -571,16 +567,10 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     const isGreen = effectiveClose >= c.open;
                     const changeVal = effectiveClose - c.open;
                     const changePerc = c.open > 0 ? (changeVal / c.open) * 100 : 0;
-                    const quoteVol = c.quoteVolume || c.volume * effectiveClose;
                     const barVwap = c.vwap || (effectiveHigh + effectiveLow + effectiveClose) / 3;
 
                     const dateObj = new Date(c.timestamp);
                     const utcStr = dateObj.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-                    const localTimeStr = dateObj.toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    });
 
                     return (
                       <tr
@@ -599,17 +589,8 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         <td className="py-2 px-3 text-slate-200 font-mono whitespace-nowrap">
                           {utcStr}
                         </td>
-                        <td className="py-2 px-3 text-slate-400 font-mono whitespace-nowrap">
-                          {localTimeStr}
-                        </td>
                         <td className="py-2 px-3 text-right text-slate-300 font-mono">
                           ${formatPrice(c.open)}
-                        </td>
-                        <td className="py-2 px-3 text-right text-emerald-400 font-medium font-mono">
-                          ${formatPrice(effectiveHigh)}
-                        </td>
-                        <td className="py-2 px-3 text-right text-rose-400 font-medium font-mono">
-                          ${formatPrice(effectiveLow)}
                         </td>
                         <td
                           className={`py-2 px-3 text-right font-bold font-mono transition-colors duration-200 ${
@@ -632,9 +613,6 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         </td>
                         <td className="py-2 px-3 text-right text-slate-200 font-mono">
                           {c.volume.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                        </td>
-                        <td className="py-2 px-3 text-right text-slate-400 font-mono">
-                          ${quoteVol.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </td>
                         <td className="py-2 px-3 text-right text-amber-300 font-mono">
                           ${formatPrice(barVwap)}

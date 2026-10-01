@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -24,7 +24,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
-import { useLiveTicker } from '../services/useLiveTicker';
+import { getBarDuration, getBarStartTime, useLiveTicker } from '../services/useLiveTicker';
 
 export const formatPrice = (val: number | undefined | null): string => {
   if (val === undefined || val === null || isNaN(val)) return '--';
@@ -76,12 +76,14 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     liveBar,
     tickCount,
     lastTickTime,
+    lastClosedBar,
+    barIndex,
   } = useLiveTicker(symbol, currentPrice, selectedTimeframe);
 
   const activeLivePrice = livePrice > 0 ? livePrice : currentPrice;
 
-  // Dynamic candle population corresponding to selected timeframe
-  const sessionCandles = useMemo(() => {
+  // Base raw candles for selected timeframe from brief
+  const baseCandles = useMemo(() => {
     let list: Candle[] = [];
     if (selectedTimeframe === '5m') {
       list = fiveMinCandles && fiveMinCandles.length > 0 ? fiveMinCandles : hourlyCandles;
@@ -92,24 +94,92 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     } else {
       list = dailyCandles;
     }
+    return list || [];
+  }, [selectedTimeframe, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles]);
 
-    const sorted = [...list];
+  // Dynamic candle population maintaining sliding window of 48 bars as bars close and new bars start
+  const [dynamicCandles, setDynamicCandles] = useState<Candle[]>(() => {
+    return baseCandles.slice(-48);
+  });
+
+  const prevSymbolRef = useRef<string>(symbol);
+  const prevTfRef = useRef<ChartTimeframe>(selectedTimeframe);
+  const lastBriefTsRef = useRef<number>(brief.timestamp);
+
+  // Synchronize when symbol, timeframe or fresh brief arrives
+  useEffect(() => {
+    if (
+      prevSymbolRef.current !== symbol ||
+      prevTfRef.current !== selectedTimeframe ||
+      lastBriefTsRef.current !== brief.timestamp
+    ) {
+      prevSymbolRef.current = symbol;
+      prevTfRef.current = selectedTimeframe;
+      lastBriefTsRef.current = brief.timestamp;
+      setDynamicCandles(baseCandles.slice(-48));
+    }
+  }, [symbol, selectedTimeframe, brief.timestamp, baseCandles]);
+
+  // Real-time Bar Rollover: When current bar closes (authoritative WebSocket or clock boundary)
+  useEffect(() => {
+    const expectedBarStart = getBarStartTime(Date.now(), selectedTimeframe);
+    const targetBarStart = liveBar ? Math.max(liveBar.timestamp, expectedBarStart) : expectedBarStart;
+
+    setDynamicCandles((prev) => {
+      if (!prev || prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+
+      // Check if current bar has finished and a newer bar is opening
+      if (targetBarStart > last.timestamp) {
+        // Finalize previous closed candle
+        const closePrice =
+          lastClosedBar && lastClosedBar.timestamp === last.timestamp
+            ? lastClosedBar.close
+            : liveBar?.open || (activeLivePrice > 0 ? activeLivePrice : last.close);
+
+        const finalizedPrev: Candle = {
+          ...last,
+          close: closePrice,
+          high: Math.max(last.high, lastClosedBar?.high || 0, closePrice),
+          low: Math.min(last.low, lastClosedBar?.low || Infinity, closePrice),
+          volume: lastClosedBar && lastClosedBar.timestamp === last.timestamp ? lastClosedBar.volume : last.volume,
+          quoteVolume: lastClosedBar && lastClosedBar.timestamp === last.timestamp ? lastClosedBar.quoteVolume : last.quoteVolume,
+          vwap: lastClosedBar?.vwap || last.vwap || (last.high + last.low + closePrice) / 3,
+        };
+
+        // Create new active candle for the new bar
+        const newActiveBar: Candle = {
+          timestamp: targetBarStart,
+          open: liveBar && liveBar.timestamp === targetBarStart ? liveBar.open : closePrice,
+          high: liveBar && liveBar.timestamp === targetBarStart ? liveBar.high : closePrice,
+          low: liveBar && liveBar.timestamp === targetBarStart ? liveBar.low : closePrice,
+          close: liveBar && liveBar.timestamp === targetBarStart ? liveBar.close : closePrice,
+          volume: liveBar && liveBar.timestamp === targetBarStart ? liveBar.volume : 0,
+          quoteVolume: liveBar && liveBar.timestamp === targetBarStart ? liveBar.quoteVolume : 0,
+          vwap: closePrice,
+        };
+
+        const updated = [...prev.slice(0, -1), finalizedPrev, newActiveBar];
+        // Maintain 48 bars populated
+        return updated.length > 48 ? updated.slice(updated.length - 48) : updated;
+      }
+
+      return prev;
+    });
+  }, [liveBar?.timestamp, lastClosedBar, barIndex, countdown.formatted, selectedTimeframe, activeLivePrice]);
+
+  // Dynamic candle population corresponding to selected timeframe
+  const sessionCandles = useMemo(() => {
+    const sorted = [...dynamicCandles];
     if (sortOrder === 'newest') {
       sorted.reverse();
     }
     return sorted;
-  }, [selectedTimeframe, sortOrder, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles]);
+  }, [dynamicCandles, sortOrder]);
 
   // Aggregate metrics calculation for the chosen timeframe with live tick integration
   const sessionStats = useMemo(() => {
-    const list =
-      selectedTimeframe === '5m'
-        ? fiveMinCandles || []
-        : selectedTimeframe === '15m'
-        ? fifteenMinCandles || []
-        : selectedTimeframe === '1H'
-        ? hourlyCandles || []
-        : dailyCandles || [];
+    const list = dynamicCandles;
 
     if (!list.length) {
       return {
@@ -178,7 +248,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
       avgRange,
       avg20Vol,
     };
-  }, [selectedTimeframe, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles, activeLivePrice, liveBar]);
+  }, [dynamicCandles, activeLivePrice, liveBar]);
 
   // CSV Export
   const handleExportCsv = () => {

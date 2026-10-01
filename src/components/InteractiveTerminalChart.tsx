@@ -19,7 +19,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
-import { useLiveTicker } from '../services/useLiveTicker';
+import { getBarStartTime, useLiveTicker } from '../services/useLiveTicker';
 
 interface InteractiveTerminalChartProps {
   brief: PreMarketBrief;
@@ -203,7 +203,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   }, [isMaximized]);
 
   // Live real-time price & bar close countdown
-  const { livePrice, priceDirection, isLiveConnected, countdown } = useLiveTicker(
+  const { livePrice, priceDirection, isLiveConnected, countdown, liveBar, lastClosedBar } = useLiveTicker(
     symbol,
     currentPrice,
     timeframe
@@ -229,16 +229,39 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     }
     if (!raw.length) return raw;
 
-    // Dynamically update active bar (last candle) with live price
     const last = raw[raw.length - 1];
+    const expectedBarStart = getBarStartTime(Date.now(), timeframe);
+    const activeStart = liveBar ? Math.max(liveBar.timestamp, expectedBarStart) : expectedBarStart;
+
+    if (activeStart > last.timestamp) {
+      // The previous bar has closed and a new bar has started!
+      const finalizedLast: Candle = {
+        ...last,
+        close: lastClosedBar && lastClosedBar.timestamp === last.timestamp ? lastClosedBar.close : last.close,
+        high: Math.max(last.high, lastClosedBar?.high || last.high),
+        low: Math.min(last.low, lastClosedBar?.low || last.low),
+      };
+      const activeBar: Candle = {
+        timestamp: activeStart,
+        open: liveBar && liveBar.timestamp === activeStart ? liveBar.open : finalizedLast.close,
+        high: liveBar && liveBar.timestamp === activeStart ? Math.max(liveBar.high, livePrice) : Math.max(finalizedLast.close, livePrice),
+        low: liveBar && liveBar.timestamp === activeStart ? Math.min(liveBar.low, livePrice) : Math.min(finalizedLast.close, livePrice),
+        close: livePrice,
+        volume: liveBar && liveBar.timestamp === activeStart ? liveBar.volume : 0,
+      };
+      return [...raw.slice(1, -1), finalizedLast, activeBar];
+    }
+
+    // Dynamically update active bar (last candle) with live price
     const updatedLast: Candle = {
       ...last,
       close: livePrice,
-      high: Math.max(last.high, livePrice),
-      low: Math.min(last.low, livePrice),
+      high: Math.max(last.high, liveBar?.high || 0, livePrice),
+      low: Math.min(last.low, liveBar && liveBar.low > 0 ? liveBar.low : Infinity, livePrice),
+      volume: liveBar && liveBar.volume > 0 ? Math.max(last.volume, liveBar.volume) : last.volume,
     };
     return [...raw.slice(0, -1), updatedLast];
-  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice]);
+  }, [timeframe, dailyCandles, hourlyCandles, fifteenMinCandles, fiveMinCandles, livePrice, liveBar, lastClosedBar]);
 
   // Windowing with Zoom and Pan
   const baseCount = isPortraitMode ? (timeframe === '1D' ? 14 : 26) : (timeframe === '1D' ? 16 : 38);

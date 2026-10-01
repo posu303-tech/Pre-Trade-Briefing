@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChartTimeframe, TickerSymbol } from '../types';
+import { Candle, ChartTimeframe, TickerSymbol } from '../types';
 
 export interface BarCountdown {
   formatted: string;
@@ -33,6 +33,38 @@ export interface LiveTickerState {
   tickCount: number;
   lastTickTime: number;
   lastTickSize: number;
+  lastClosedBar: Candle | null;
+  barIndex: number;
+}
+
+export function getBarStartTime(time: number, timeframe: ChartTimeframe): number {
+  if (timeframe === '5m') {
+    return Math.floor(time / (5 * 60 * 1000)) * (5 * 60 * 1000);
+  }
+  if (timeframe === '15m') {
+    return Math.floor(time / (15 * 60 * 1000)) * (15 * 60 * 1000);
+  }
+  if (timeframe === '1H') {
+    return Math.floor(time / (60 * 60 * 1000)) * (60 * 60 * 1000);
+  }
+  // 1D timeframe (00:00:00 UTC)
+  const d = new Date(time);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0);
+}
+
+export function getBarDuration(timeframe: ChartTimeframe): number {
+  switch (timeframe) {
+    case '5m':
+      return 5 * 60 * 1000;
+    case '15m':
+      return 15 * 60 * 1000;
+    case '1H':
+      return 60 * 60 * 1000;
+    case '1D':
+      return 24 * 60 * 60 * 1000;
+    default:
+      return 15 * 60 * 1000;
+  }
 }
 
 function calculateCountdown(timeframe: ChartTimeframe): BarCountdown {
@@ -125,6 +157,8 @@ export function useLiveTicker(
   const [tickCount, setTickCount] = useState<number>(0);
   const [lastTickTime, setLastTickTime] = useState<number>(Date.now());
   const [lastTickSize, setLastTickSize] = useState<number>(0);
+  const [lastClosedBar, setLastClosedBar] = useState<Candle | null>(null);
+  const [barIndex, setBarIndex] = useState<number>(0);
 
   const prevPriceRef = useRef<number>(initialPrice);
   const directionTimeoutRef = useRef<any>(null);
@@ -141,11 +175,50 @@ export function useLiveTicker(
     }
   }, [initialPrice, symbol]);
 
-  // Real-time countdown timer (1 second ticks)
+  // Real-time countdown timer (1 second ticks) + Clock bar-boundary transition
   useEffect(() => {
     setCountdown(calculateCountdown(timeframe));
     const timer = setInterval(() => {
-      setCountdown(calculateCountdown(timeframe));
+      const cd = calculateCountdown(timeframe);
+      setCountdown(cd);
+
+      // Check if bar boundary has elapsed by clock time
+      const expectedBarStart = getBarStartTime(Date.now(), timeframe);
+      if (liveBarRef.current && expectedBarStart > liveBarRef.current.timestamp) {
+        const prev = liveBarRef.current;
+        const closedCandle: Candle = {
+          timestamp: prev.timestamp,
+          open: prev.open,
+          high: prev.high,
+          low: prev.low,
+          close: prev.close,
+          volume: prev.volume,
+          quoteVolume: prev.quoteVolume,
+          vwap: prev.volume > 0 ? prev.quoteVolume / prev.volume : prev.close,
+        };
+        setLastClosedBar(closedCandle);
+        setBarIndex((b) => b + 1);
+
+        liveBarRef.current = {
+          open: prev.close,
+          high: prev.close,
+          low: prev.close,
+          close: prev.close,
+          volume: 0,
+          quoteVolume: 0,
+          timestamp: expectedBarStart,
+          isClosed: false,
+          tradesCount: 1,
+          lastTickPrice: prev.close,
+          lastTickSize: 0,
+          lastTickTime: Date.now(),
+          tickDirection: 'neutral',
+        };
+
+        if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+        setLiveBar({ ...liveBarRef.current });
+      }
     }, 1000);
 
     return () => clearInterval(timer);
@@ -214,6 +287,8 @@ export function useLiveTicker(
       setLastTickSize(size);
       tickCounterRef.current += 1;
 
+      const expectedBarStart = getBarStartTime(timestamp || Date.now(), timeframe);
+
       // Update or initialize liveBar
       if (!liveBarRef.current) {
         liveBarRef.current = {
@@ -223,7 +298,7 @@ export function useLiveTicker(
           close: price,
           volume: size > 0 ? size : 0,
           quoteVolume: size > 0 ? size * price : 0,
-          timestamp,
+          timestamp: expectedBarStart,
           isClosed: false,
           tradesCount: 1,
           lastTickPrice: price,
@@ -232,19 +307,52 @@ export function useLiveTicker(
           tickDirection: dir,
         };
       } else if (!isKlineAuthoritative) {
-        const cur = liveBarRef.current;
-        cur.close = price;
-        cur.high = Math.max(cur.high, price);
-        cur.low = Math.min(cur.low, price);
-        if (size > 0) {
-          cur.volume += size;
-          cur.quoteVolume += size * price;
+        // If trade timestamp or clock has crossed into the next bar
+        if (expectedBarStart > liveBarRef.current.timestamp) {
+          const cur = liveBarRef.current;
+          const closedCandle: Candle = {
+            timestamp: cur.timestamp,
+            open: cur.open,
+            high: cur.high,
+            low: cur.low,
+            close: cur.close,
+            volume: cur.volume,
+            quoteVolume: cur.quoteVolume,
+            vwap: cur.volume > 0 ? cur.quoteVolume / cur.volume : cur.close,
+          };
+          setLastClosedBar(closedCandle);
+          setBarIndex((b) => b + 1);
+
+          liveBarRef.current = {
+            open: cur.close,
+            high: Math.max(cur.close, price),
+            low: Math.min(cur.close, price),
+            close: price,
+            volume: size > 0 ? size : 0,
+            quoteVolume: size > 0 ? size * price : 0,
+            timestamp: expectedBarStart,
+            isClosed: false,
+            tradesCount: 1,
+            lastTickPrice: price,
+            lastTickSize: size,
+            lastTickTime: timestamp,
+            tickDirection: dir,
+          };
+        } else {
+          const cur = liveBarRef.current;
+          cur.close = price;
+          cur.high = Math.max(cur.high, price);
+          cur.low = Math.min(cur.low, price);
+          if (size > 0) {
+            cur.volume += size;
+            cur.quoteVolume += size * price;
+          }
+          cur.tradesCount += 1;
+          cur.lastTickPrice = price;
+          cur.lastTickSize = size;
+          cur.lastTickTime = timestamp;
+          cur.tickDirection = dir;
         }
-        cur.tradesCount += 1;
-        cur.lastTickPrice = price;
-        cur.lastTickSize = size;
-        cur.lastTickTime = timestamp;
-        cur.tickDirection = dir;
       }
 
       scheduleFlush();
@@ -263,6 +371,23 @@ export function useLiveTicker(
       const barStartTime = k.t;
 
       if (!liveBarRef.current || liveBarRef.current.timestamp !== barStartTime) {
+        // If a previous bar existed, it has now closed!
+        if (liveBarRef.current) {
+          const cur = liveBarRef.current;
+          const closedCandle: Candle = {
+            timestamp: cur.timestamp,
+            open: cur.open,
+            high: cur.high,
+            low: cur.low,
+            close: cur.close,
+            volume: cur.volume,
+            quoteVolume: cur.quoteVolume,
+            vwap: cur.volume > 0 ? cur.quoteVolume / cur.volume : cur.close,
+          };
+          setLastClosedBar(closedCandle);
+          setBarIndex((b) => b + 1);
+        }
+
         // New candle bar started
         liveBarRef.current = {
           open: o,
@@ -289,6 +414,21 @@ export function useLiveTicker(
         cur.quoteVolume = Math.max(cur.quoteVolume, q);
         cur.isClosed = isClosed;
         cur.tradesCount = Math.max(cur.tradesCount, tradesCount);
+
+        if (isClosed) {
+          const closedCandle: Candle = {
+            timestamp: cur.timestamp,
+            open: cur.open,
+            high: cur.high,
+            low: cur.low,
+            close: cur.close,
+            volume: cur.volume,
+            quoteVolume: cur.quoteVolume,
+            vwap: cur.volume > 0 ? cur.quoteVolume / cur.volume : cur.close,
+          };
+          setLastClosedBar(closedCandle);
+          setBarIndex((b) => b + 1);
+        }
       }
 
       handleTickUpdate(c, 0, Date.now(), true);
@@ -443,5 +583,7 @@ export function useLiveTicker(
     tickCount,
     lastTickTime,
     lastTickSize,
+    lastClosedBar,
+    barIndex,
   };
 }

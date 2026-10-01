@@ -122,6 +122,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
         totalQuoteVol: 0,
         vwap: 0,
         avgRange: 0,
+        avg20Vol: 0,
       };
     }
 
@@ -144,6 +145,9 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     );
     const vwap = totalVol > 0 ? sumWeightedTypical / totalVol : close;
     const avgRange = list.reduce((acc, c) => acc + (c.high - c.low), 0) / list.length;
+    const last20 = list.slice(-20);
+    const avg20Vol =
+      last20.length > 0 ? last20.reduce((acc, c) => acc + c.volume, 0) / last20.length : 0;
 
     return {
       count: list.length,
@@ -159,6 +163,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
       totalQuoteVol,
       vwap,
       avgRange,
+      avg20Vol,
     };
   }, [selectedTimeframe, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles]);
 
@@ -517,7 +522,8 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                 ${formatPrice(sessionStats.netChange)} ({sessionStats.netChangePerc.toFixed(2)}%)
               </span>
               <span className="text-[10px] text-slate-400 block mt-0.5">
-                Avg bar: ${formatPrice(sessionStats.avgRange)}
+                Avg bar: ${formatPrice(sessionStats.avgRange)} | 20-Bar Avg Vol:{' '}
+                {sessionStats.avg20Vol.toLocaleString(undefined, { maximumFractionDigits: 1 })}
               </span>
             </div>
           </div>
@@ -534,7 +540,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                 </h3>
               </div>
               <span className="text-slate-400 text-[11px]">
-                Showing Open, Close, Range ($ & %), Change ($), Volume, Bar VWAP, and Direction
+                Showing Open, Close, Range ($ & %), Change ($), Volume, Vol / 20-Avg, and Direction
               </span>
             </div>
 
@@ -550,7 +556,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     <th className="py-2.5 px-3 text-right">Range (%)</th>
                     <th className="py-2.5 px-3 text-right">Change ($)</th>
                     <th className="py-2.5 px-3 text-right">Volume</th>
-                    <th className="py-2.5 px-3 text-right">Bar VWAP ($)</th>
+                    <th className="py-2.5 px-3 text-right">Vol / 20-Avg</th>
                     <th className="py-2.5 px-3 text-right">Change (%)</th>
                     <th className="py-2.5 px-3 text-center">Status</th>
                   </tr>
@@ -568,7 +574,17 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     const isGreen = effectiveClose >= c.open;
                     const changeVal = effectiveClose - c.open;
                     const changePerc = c.open > 0 ? (changeVal / c.open) * 100 : 0;
-                    const barVwap = c.vwap || (effectiveHigh + effectiveLow + effectiveClose) / 3;
+
+                    const barVol = c.volume;
+                    const volRatio = sessionStats.avg20Vol > 0 ? barVol / sessionStats.avg20Vol : 0;
+                    const roundedRatio = parseFloat(volRatio.toFixed(1));
+                    const volRatioStr = `${roundedRatio.toFixed(1)}X`;
+                    const volRatioColor =
+                      roundedRatio >= 1.3
+                        ? 'text-emerald-400 font-bold'
+                        : roundedRatio <= 0.7
+                        ? 'text-rose-400 font-bold'
+                        : 'text-white font-medium';
 
                     const dateObj = new Date(c.timestamp);
                     const utcStr = dateObj.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
@@ -626,8 +642,8 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         <td className="py-2 px-3 text-right text-slate-200 font-mono">
                           {c.volume.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                         </td>
-                        <td className="py-2 px-3 text-right text-amber-300 font-mono">
-                          ${formatPrice(barVwap)}
+                        <td className={`py-2 px-3 text-right font-mono ${volRatioColor}`}>
+                          {volRatioStr}
                         </td>
                         <td className="py-2 px-3 text-right font-mono">
                           <span

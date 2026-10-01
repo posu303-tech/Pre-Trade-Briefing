@@ -68,11 +68,15 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
   const [copiedCsv, setCopiedCsv] = useState(false);
 
   // Live WebSocket price feed for real-time audit verification
-  const { livePrice, priceDirection, isLiveConnected, countdown } = useLiveTicker(
-    symbol,
-    currentPrice,
-    selectedTimeframe
-  );
+  const {
+    livePrice,
+    priceDirection,
+    isLiveConnected,
+    countdown,
+    liveBar,
+    tickCount,
+    lastTickTime,
+  } = useLiveTicker(symbol, currentPrice, selectedTimeframe);
 
   const activeLivePrice = livePrice > 0 ? livePrice : currentPrice;
 
@@ -96,7 +100,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     return sorted;
   }, [selectedTimeframe, sortOrder, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles]);
 
-  // Aggregate metrics calculation for the chosen timeframe
+  // Aggregate metrics calculation for the chosen timeframe with live tick integration
   const sessionStats = useMemo(() => {
     const list =
       selectedTimeframe === '5m'
@@ -126,15 +130,22 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
       };
     }
 
-    const high = Math.max(...list.map((c) => c.high));
-    const low = Math.min(...list.map((c) => c.low));
+    const lastIdx = list.length - 1;
+    const latestCandle = list[lastIdx];
+    const liveC = activeLivePrice > 0 ? activeLivePrice : latestCandle.close;
+    const liveH = Math.max(latestCandle.high, liveBar?.high || 0, liveC);
+    const liveL = Math.min(latestCandle.low, liveBar && liveBar.low > 0 ? liveBar.low : Infinity, liveC);
+    const liveV = liveBar && liveBar.volume > 0 ? Math.max(latestCandle.volume, liveBar.volume) : latestCandle.volume;
+
+    const high = Math.max(...list.slice(0, lastIdx).map((c) => c.high), liveH);
+    const low = Math.min(...list.slice(0, lastIdx).map((c) => c.low), liveL);
     const open = list[0].open;
-    const close = list[list.length - 1].close;
+    const close = liveC;
     const range = high - low;
     const rangePerc = open > 0 ? (range / open) * 100 : 0;
     const netChange = close - open;
     const netChangePerc = open > 0 ? (netChange / open) * 100 : 0;
-    const totalVol = list.reduce((acc, c) => acc + c.volume, 0);
+    const totalVol = list.slice(0, lastIdx).reduce((acc, c) => acc + c.volume, 0) + liveV;
     const totalQuoteVol = list.reduce(
       (acc, c) => acc + (c.quoteVolume || c.volume * c.close),
       0
@@ -147,7 +158,9 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     const avgRange = list.reduce((acc, c) => acc + (c.high - c.low), 0) / list.length;
     const last20 = list.slice(-20);
     const avg20Vol =
-      last20.length > 0 ? last20.reduce((acc, c) => acc + c.volume, 0) / last20.length : 0;
+      last20.length > 0
+        ? (last20.slice(0, -1).reduce((acc, c) => acc + c.volume, 0) + liveV) / last20.length
+        : 0;
 
     return {
       count: list.length,
@@ -165,7 +178,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
       avgRange,
       avg20Vol,
     };
-  }, [selectedTimeframe, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles]);
+  }, [selectedTimeframe, fiveMinCandles, fifteenMinCandles, hourlyCandles, dailyCandles, activeLivePrice, liveBar]);
 
   // CSV Export
   const handleExportCsv = () => {
@@ -539,9 +552,26 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                   Granular Candlestick Audit ({sessionCandles.length} Bars Populated)
                 </h3>
               </div>
-              <span className="text-slate-400 text-[11px]">
-                Showing Open, Close, Range ($ & %), Change ($), Volume, Vol / 20-Avg, and Direction
-              </span>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-950 border border-emerald-500/30 text-[11px] font-mono shadow-[0_0_10px_rgba(16,185,129,0.15)]">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-emerald-400 font-bold">LIVE TICK STREAM</span>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-300">
+                    Ticks: <strong className="text-white">{tickCount > 0 ? tickCount.toLocaleString() : '1'}</strong>
+                  </span>
+                  <span className="text-slate-600">|</span>
+                  <span className="text-slate-400">
+                    Close: <strong className="text-cyan-300">{countdown.formatted}</strong>
+                  </span>
+                </div>
+                <span className="text-slate-400 text-[11px] hidden xl:inline">
+                  Showing Open, Close, Range ($ & %), Change ($), Volume, Vol / 20-Avg, and Direction
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-lg border border-slate-800">
@@ -565,17 +595,19 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                   {sessionCandles.map((c, idx) => {
                     // Latest bar check
                     const isLatest = sortOrder === 'newest' ? idx === 0 : idx === sessionCandles.length - 1;
-                    const effectiveClose = isLatest ? activeLivePrice : c.close;
-                    const effectiveHigh = isLatest ? Math.max(c.high, activeLivePrice) : c.high;
-                    const effectiveLow = isLatest ? Math.min(c.low, activeLivePrice) : c.low;
+                    const effectiveClose = isLatest && liveBar ? liveBar.close : isLatest ? activeLivePrice : c.close;
+                    const effectiveHigh = isLatest && liveBar ? Math.max(c.high, liveBar.high, activeLivePrice) : isLatest ? Math.max(c.high, activeLivePrice) : c.high;
+                    const effectiveLow = isLatest && liveBar && liveBar.low > 0 ? Math.min(c.low, liveBar.low, activeLivePrice) : isLatest ? Math.min(c.low, activeLivePrice) : c.low;
+                    const effectiveOpen = isLatest && liveBar && liveBar.open > 0 ? liveBar.open : c.open;
+                    const effectiveVolume = isLatest && liveBar && liveBar.volume > 0 ? Math.max(c.volume, liveBar.volume) : c.volume;
 
                     const range = effectiveHigh - effectiveLow;
-                    const rangePerc = c.open > 0 ? (range / c.open) * 100 : 0;
-                    const isGreen = effectiveClose >= c.open;
-                    const changeVal = effectiveClose - c.open;
-                    const changePerc = c.open > 0 ? (changeVal / c.open) * 100 : 0;
+                    const rangePerc = effectiveOpen > 0 ? (range / effectiveOpen) * 100 : 0;
+                    const isGreen = effectiveClose >= effectiveOpen;
+                    const changeVal = effectiveClose - effectiveOpen;
+                    const changePerc = effectiveOpen > 0 ? (changeVal / effectiveOpen) * 100 : 0;
 
-                    const barVol = c.volume;
+                    const barVol = effectiveVolume;
                     const volRatio = sessionStats.avg20Vol > 0 ? barVol / sessionStats.avg20Vol : 0;
                     const roundedRatio = parseFloat(volRatio.toFixed(1));
                     const volRatioStr = `${roundedRatio.toFixed(1)}X`;
@@ -586,15 +618,22 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         ? 'text-rose-400 font-bold'
                         : 'text-white font-medium';
 
+                    const isTickFlashUp = isLatest && priceDirection === 'up';
+                    const isTickFlashDown = isLatest && priceDirection === 'down';
+
                     const dateObj = new Date(c.timestamp);
                     const utcStr = dateObj.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
 
                     return (
                       <tr
                         key={c.timestamp + '-' + idx}
-                        className={`hover:bg-slate-800/40 transition text-xs ${
+                        className={`transition-colors duration-150 text-xs ${
                           isLatest
-                            ? 'bg-cyan-500/10 font-medium'
+                            ? isTickFlashUp
+                              ? 'bg-emerald-500/20 shadow-[inset_0_0_14px_rgba(16,185,129,0.3)] border-y border-emerald-500/40'
+                              : isTickFlashDown
+                              ? 'bg-rose-500/20 shadow-[inset_0_0_14px_rgba(244,63,94,0.3)] border-y border-rose-500/40'
+                              : 'bg-cyan-500/10 font-medium'
                             : idx % 2 === 0
                             ? 'bg-slate-900/40'
                             : 'bg-slate-900'
@@ -607,16 +646,16 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                           {utcStr}
                         </td>
                         <td className="py-2 px-3 text-right text-slate-300 font-mono">
-                          ${formatPrice(c.open)}
+                          ${formatPrice(effectiveOpen)}
                         </td>
                         <td
-                          className={`py-2 px-3 text-right font-bold font-mono transition-colors duration-200 ${
+                          className={`py-2 px-3 text-right font-bold font-mono transition-colors duration-150 ${
                             isGreen ? 'text-emerald-400' : 'text-rose-400'
                           } ${
-                            isLatest && priceDirection === 'up'
-                              ? 'text-emerald-300'
-                              : isLatest && priceDirection === 'down'
-                              ? 'text-rose-300'
+                            isTickFlashUp
+                              ? 'text-emerald-300 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]'
+                              : isTickFlashDown
+                              ? 'text-rose-300 drop-shadow-[0_0_8px_rgba(251,113,133,0.5)]'
                               : ''
                           }`}
                         >
@@ -639,8 +678,10 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         >
                           {changeVal > 0 ? '+' : changeVal < 0 ? '-' : ''}${formatPrice(Math.abs(changeVal))}
                         </td>
-                        <td className="py-2 px-3 text-right text-slate-200 font-mono">
-                          {c.volume.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                        <td className="py-2 px-3 text-right font-mono">
+                          <span className={isLatest ? 'text-cyan-300 font-semibold transition-all' : 'text-slate-200'}>
+                            {effectiveVolume.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                          </span>
                         </td>
                         <td className={`py-2 px-3 text-right font-mono ${volRatioColor}`}>
                           {volRatioStr}
@@ -659,14 +700,19 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         </td>
                         <td className="py-2 px-3 text-center">
                           {isLatest ? (
-                            <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] border border-cyan-500/30 flex items-center justify-center gap-1 mx-auto w-fit">
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
-                                }`}
-                              />
-                              LIVE BAR
-                            </span>
+                            <div className="flex flex-col items-center justify-center gap-0.5 mx-auto">
+                              <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[10px] border border-cyan-500/40 flex items-center justify-center gap-1.5 w-fit shadow-[0_0_8px_rgba(6,182,212,0.3)]">
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    isLiveConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                                  }`}
+                                />
+                                LIVE BAR
+                              </span>
+                              <span className="text-[9px] font-mono text-cyan-400/80">
+                                Tick #{tickCount > 0 ? tickCount.toLocaleString() : '1'} • {countdown.formatted}
+                              </span>
+                            </div>
                           ) : (
                             <span className="text-slate-500 text-[10px]">Closed</span>
                           )}

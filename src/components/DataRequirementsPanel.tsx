@@ -534,7 +534,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                 </h3>
               </div>
               <span className="text-slate-400 text-[11px]">
-                Showing Open, Close, Range ($ & %), Volume, Bar VWAP, and Direction
+                Showing Open, Close, Range ($ & %), Change ($), Volume, Bar VWAP, and Direction
               </span>
             </div>
 
@@ -548,6 +548,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     <th className="py-2.5 px-3 text-right">Close ($)</th>
                     <th className="py-2.5 px-3 text-right">Range ($)</th>
                     <th className="py-2.5 px-3 text-right">Range (%)</th>
+                    <th className="py-2.5 px-3 text-right">Change ($)</th>
                     <th className="py-2.5 px-3 text-right">Volume</th>
                     <th className="py-2.5 px-3 text-right">Bar VWAP ($)</th>
                     <th className="py-2.5 px-3 text-right">Change (%)</th>
@@ -610,6 +611,17 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                         </td>
                         <td className="py-2 px-3 text-right text-amber-300/90 font-mono">
                           {rangePerc.toFixed(2)}%
+                        </td>
+                        <td
+                          className={`py-2 px-3 text-right font-mono font-medium ${
+                            changeVal > 0
+                              ? 'text-emerald-400'
+                              : changeVal < 0
+                              ? 'text-rose-400'
+                              : 'text-slate-400'
+                          }`}
+                        >
+                          {changeVal > 0 ? '+' : changeVal < 0 ? '-' : ''}${formatPrice(Math.abs(changeVal))}
                         </td>
                         <td className="py-2 px-3 text-right text-slate-200 font-mono">
                           {c.volume.toLocaleString(undefined, { maximumFractionDigits: 4 })}

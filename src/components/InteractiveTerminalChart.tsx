@@ -150,8 +150,10 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
   const [zoom, setZoom] = useState<number>(1.0); // 0.4x (wide context) to 3.0x (detailed magnification)
   const [panOffset, setPanOffset] = useState<number>(0); // number of historical candles panned back
   const [pricePanOffset, setPricePanOffset] = useState<number>(0); // vertical dollar offset
+  const [priceScale, setPriceScale] = useState<number>(1.0); // vertical price axis zoom scale (0.2x to 8.0x)
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragMoved, setDragMoved] = useState<boolean>(false);
+  const [isPriceAxisDragging, setIsPriceAxisDragging] = useState<boolean>(false);
 
   const svgContainerRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{
@@ -160,13 +162,20 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     initialPan: number;
     initialPricePan: number;
   }>({ x: 0, y: 0, initialPan: 0, initialPricePan: 0 });
+  const priceAxisDragStartRef = useRef<{
+    y: number;
+    initialPriceScale: number;
+    initialPricePan: number;
+  }>({ y: 0, initialPriceScale: 1.0, initialPricePan: 0 });
   const touchDistRef = useRef<number | null>(null);
   const isDraggingRef = useRef<boolean>(false);
+  const isPriceAxisDraggingRef = useRef<boolean>(false);
 
-  // Reset pan whenever timeframe changes
+  // Reset pan and price scale whenever timeframe changes
   useEffect(() => {
     setPanOffset(0);
     setPricePanOffset(0);
+    setPriceScale(1.0);
   }, [timeframe]);
 
   // Viewport tracking for mobile portrait vs landscape detection
@@ -311,15 +320,22 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     setPanOffset((prev) => Math.max(0, prev - count));
   }, []);
 
+  const handleResetPriceScale = useCallback(() => {
+    setPriceScale(1.0);
+    setPricePanOffset(0);
+  }, []);
+
   const handleJumpToLive = useCallback(() => {
     setPanOffset(0);
     setPricePanOffset(0);
+    setPriceScale(1.0);
   }, []);
 
   const handleResetView = useCallback(() => {
     setZoom(1.0);
     setPanOffset(0);
     setPricePanOffset(0);
+    setPriceScale(1.0);
   }, []);
 
   const handlePreset = useCallback(
@@ -329,14 +345,17 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
         setZoom(fitZoom);
         setPanOffset(0);
         setPricePanOffset(0);
+        setPriceScale(1.0);
       } else if (preset === '100%') {
         setZoom(1.0);
         setPanOffset(0);
         setPricePanOffset(0);
+        setPriceScale(1.0);
       } else if (preset === 'focus') {
         setZoom(2.2);
         setPanOffset(0);
         setPricePanOffset(0);
+        setPriceScale(1.0);
       }
     },
     [baseCount, rawCandles.length]
@@ -349,6 +368,17 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const relativeX = e.clientX - rect.left;
+      const isOverPriceAxis = relativeX > rect.width * 0.85;
+
+      if (isOverPriceAxis) {
+        // Vertical wheel over price axis zooms price scale
+        const factor = e.deltaY < 0 ? 1.12 : 0.89;
+        setPriceScale((prev) => Math.max(0.2, Math.min(8.0, Number((prev * factor).toFixed(3)))));
+        return;
+      }
+
       // Trackpad horizontal swipe or Shift+Wheel: Pan horizontally
       if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
@@ -442,22 +472,27 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     const range = max - min;
     const rawPad = range > 0 ? range * 0.08 : (livePrice || 100) * 0.02;
 
-    // Step quantization: snap bounds to clean intervals so minor live fluctuations do not shift coordinate axes
-    const rawMin = min - rawPad + pricePanOffset;
-    const rawMax = max + rawPad + pricePanOffset;
+    // Apply vertical price scale zoom & price pan offset (TradingView style vertical scaling)
+    const midPrice = (min + max) / 2 + pricePanOffset;
+    const baseHalfRange = range / 2 + rawPad;
+    const scaledHalfRange = baseHalfRange / priceScale;
+    const rawMin = midPrice - scaledHalfRange;
+    const rawMax = midPrice + scaledHalfRange;
+
+    const currentRange = Math.max(0.0001, rawMax - rawMin);
     const step =
-      range > 20000 ? 250 :
-      range > 5000 ? 50 :
-      range > 1000 ? 10 :
-      range > 200 ? 2 :
-      range > 50 ? 0.5 :
-      range > 5 ? 0.1 : 0.02;
+      currentRange > 20000 ? 250 :
+      currentRange > 5000 ? 50 :
+      currentRange > 1000 ? 10 :
+      currentRange > 200 ? 2 :
+      currentRange > 50 ? 0.5 :
+      currentRange > 5 ? 0.1 : 0.02;
 
     const quantizedMin = Math.floor(rawMin / step) * step;
     const quantizedMax = Math.ceil(rawMax / step) * step;
 
     return { minPrice: quantizedMin, maxPrice: quantizedMax };
-  }, [candles, showPivots, showProfile, showVwap, pivots, volumeProfile, sessionVwap, livePrice, effectivePan, pricePanOffset]);
+  }, [candles, showPivots, showProfile, showVwap, pivots, volumeProfile, sessionVwap, livePrice, effectivePan, pricePanOffset, priceScale]);
 
   const priceToY = useCallback(
     (price: number) => {
@@ -668,7 +703,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
-            {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0) && (
+            {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0 || priceScale !== 1.0) && (
               <button
                 onClick={handleResetView}
                 className="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 font-bold text-[10.5px] transition flex items-center gap-1 shadow-sm"
@@ -676,6 +711,15 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               >
                 <RotateCcw className="w-3 h-3" />
                 <span className="hidden sm:inline">Reset</span>
+              </button>
+            )}
+            {priceScale !== 1.0 && (
+              <button
+                onClick={handleResetPriceScale}
+                className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 text-[10.5px] font-bold hover:bg-amber-500/20 transition flex items-center gap-1"
+                title="Price Axis Scaled • Click to reset vertical scale"
+              >
+                <span>↕ {Math.round(priceScale * 100)}%</span>
               </button>
             )}
           </div>
@@ -1740,11 +1784,11 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             </g>
           )}
 
-          {/* Interactive Mouse & Touch Tracking Layer - Smooth hover & pan/drag gesture support */}
+          {/* Interactive Mouse & Touch Tracking Layer - Smooth hover & pan/drag gesture support on chart canvas */}
           <rect
             x={0}
             y={0}
-            width={svgWidth}
+            width={chartWidth + profileWidth}
             height={svgHeight}
             fill="transparent"
             className={`select-none touch-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
@@ -1900,6 +1944,128 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               touchDistRef.current = null;
             }}
           />
+
+          {/* Dedicated Price Axis Drag-to-Zoom Layer (TradingView style vertical scaling) */}
+          <g className="price-axis-zoom-zone select-none">
+            <rect
+              x={chartWidth + profileWidth}
+              y={0}
+              width={rightMargin}
+              height={svgHeight}
+              fill={isPriceAxisDragging ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}
+              className="cursor-ns-resize touch-none select-none"
+              title="Drag vertically through price axis to zoom price scale • Double-click or click AUTO to reset"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                } catch {
+                  // ignore
+                }
+                isPriceAxisDraggingRef.current = true;
+                setIsPriceAxisDragging(true);
+                priceAxisDragStartRef.current = {
+                  y: e.clientY,
+                  initialPriceScale: priceScale,
+                  initialPricePan: pricePanOffset,
+                };
+              }}
+              onPointerMove={(e) => {
+                if (!isPriceAxisDraggingRef.current) return;
+                const dy = e.clientY - priceAxisDragStartRef.current.y;
+                // Dragging UP (negative dy) expands price movement/magnifies candles (zooms in)
+                // Dragging DOWN (positive dy) compresses price movement/flattens candles (zooms out)
+                const factor = Math.exp(-dy * 0.007);
+                const nextScale = Math.max(
+                  0.2,
+                  Math.min(8.0, Number((priceAxisDragStartRef.current.initialPriceScale * factor).toFixed(3)))
+                );
+                setPriceScale(nextScale);
+              }}
+              onPointerUp={(e) => {
+                try {
+                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  }
+                } catch {
+                  // ignore
+                }
+                isPriceAxisDraggingRef.current = false;
+                setIsPriceAxisDragging(false);
+              }}
+              onPointerCancel={(e) => {
+                try {
+                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  }
+                } catch {
+                  // ignore
+                }
+                isPriceAxisDraggingRef.current = false;
+                setIsPriceAxisDragging(false);
+              }}
+              onDoubleClick={handleResetPriceScale}
+              onTouchStart={(e) => {
+                if (e.touches.length === 1) {
+                  isPriceAxisDraggingRef.current = true;
+                  setIsPriceAxisDragging(true);
+                  priceAxisDragStartRef.current = {
+                    y: e.touches[0].clientY,
+                    initialPriceScale: priceScale,
+                    initialPricePan: pricePanOffset,
+                  };
+                }
+              }}
+              onTouchMove={(e) => {
+                if (e.touches.length === 1 && isPriceAxisDraggingRef.current) {
+                  const dy = e.touches[0].clientY - priceAxisDragStartRef.current.y;
+                  const factor = Math.exp(-dy * 0.007);
+                  const nextScale = Math.max(
+                    0.2,
+                    Math.min(8.0, Number((priceAxisDragStartRef.current.initialPriceScale * factor).toFixed(3)))
+                  );
+                  setPriceScale(nextScale);
+                }
+              }}
+              onTouchEnd={() => {
+                isPriceAxisDraggingRef.current = false;
+                setIsPriceAxisDragging(false);
+              }}
+            />
+
+            {/* TradingView-style AUTO / Price Scale Reset Badge on Price Axis */}
+            {(priceScale !== 1.0 || isPriceAxisDragging) && (
+              <g
+                className="cursor-pointer select-none"
+                onClick={handleResetPriceScale}
+                filter="url(#badgeShadow)"
+              >
+                <rect
+                  x={chartWidth + profileWidth + 8}
+                  y={marginTop + chartHeight - 24}
+                  width={rightMargin - 16}
+                  height={20}
+                  fill={isPriceAxisDragging ? '#0284c7' : '#0f172a'}
+                  stroke="#38bdf8"
+                  strokeWidth={1}
+                  rx={3.5}
+                />
+                <text
+                  x={chartWidth + profileWidth + rightMargin / 2}
+                  y={marginTop + chartHeight - 10}
+                  fill={isPriceAxisDragging ? '#ffffff' : '#38bdf8'}
+                  fontSize={10}
+                  fontFamily={CHART_SANS_FONT}
+                  fontWeight="700"
+                  textAnchor="middle"
+                  letterSpacing="0.02em"
+                  style={{ fontFeatureSettings: '"tnum"' }}
+                >
+                  {isPriceAxisDragging ? `${Math.round(priceScale * 100)}% ↕` : `AUTO ↺`}
+                </text>
+              </g>
+            )}
+          </g>
         </svg>
 
         {/* Floating On-Canvas Chart Controls HUD (Bottom-Right) */}
@@ -1949,7 +2115,17 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           >
             Fit
           </button>
-          {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0) && (
+          {priceScale !== 1.0 && (
+            <button
+              onClick={handleResetPriceScale}
+              className="px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold transition flex items-center gap-0.5"
+              title="Reset price scale to auto (Double-click price axis)"
+            >
+              <span>↕ {Math.round(priceScale * 100)}%</span>
+              <span className="text-amber-400">↺</span>
+            </button>
+          )}
+          {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0 || priceScale !== 1.0) && (
             <button
               onClick={handleResetView}
               className="px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-300 border border-cyan-800/80 hover:bg-cyan-900 font-bold text-[10px] transition flex items-center gap-1 shadow-sm"

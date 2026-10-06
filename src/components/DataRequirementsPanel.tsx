@@ -83,7 +83,9 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
   const [auditZoom, setAuditZoom] = useState<number>(1.0);
   const [auditPan, setAuditPan] = useState<number>(0);
   const [auditPricePan, setAuditPricePan] = useState<number>(0);
+  const [auditPriceScale, setAuditPriceScale] = useState<number>(1.0);
   const [auditDragging, setAuditDragging] = useState<boolean>(false);
+  const [isAuditPriceAxisDragging, setIsAuditPriceAxisDragging] = useState<boolean>(false);
   const [auditHoverCandle, setAuditHoverCandle] = useState<Candle | null>(null);
   const [auditHoverX, setAuditHoverX] = useState<number | null>(null);
   const [auditHoverY, setAuditHoverY] = useState<number | null>(null);
@@ -95,7 +97,13 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     initialPan: number;
     initialPricePan: number;
   }>({ x: 0, y: 0, initialPan: 0, initialPricePan: 0 });
+  const auditPriceAxisDragStartRef = useRef<{
+    y: number;
+    initialPriceScale: number;
+    initialPricePan: number;
+  }>({ y: 0, initialPriceScale: 1.0, initialPricePan: 0 });
   const isAuditDraggingRef = useRef<boolean>(false);
+  const isAuditPriceAxisDraggingRef = useRef<boolean>(false);
   const auditTouchDistRef = useRef<number | null>(null);
 
   // Live WebSocket price feed for real-time audit verification
@@ -243,10 +251,16 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     setAuditPan((prev) => Math.max(0, prev - count));
   }, []);
 
+  const handleAuditResetPriceScale = useCallback(() => {
+    setAuditPriceScale(1.0);
+    setAuditPricePan(0);
+  }, []);
+
   const handleAuditResetView = useCallback(() => {
     setAuditZoom(1.0);
     setAuditPan(0);
     setAuditPricePan(0);
+    setAuditPriceScale(1.0);
   }, []);
 
   const handleAuditPreset = useCallback(
@@ -259,14 +273,17 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
         setAuditZoom(fitZoom);
         setAuditPan(0);
         setAuditPricePan(0);
+        setAuditPriceScale(1.0);
       } else if (preset === '100%') {
         setAuditZoom(1.0);
         setAuditPan(0);
         setAuditPricePan(0);
+        setAuditPriceScale(1.0);
       } else if (preset === 'focus') {
         setAuditZoom(2.0);
         setAuditPan(0);
         setAuditPricePan(0);
+        setAuditPriceScale(1.0);
       }
     },
     [auditBaseCount, dynamicCandles.length]
@@ -279,6 +296,17 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const relativeX = e.clientX - rect.left;
+      const isOverPriceAxis = relativeX > rect.width * 0.88;
+
+      if (isOverPriceAxis) {
+        // Vertical wheel over price axis zooms audit price scale
+        const factor = e.deltaY < 0 ? 1.12 : 0.89;
+        setAuditPriceScale((prev) => Math.max(0.2, Math.min(8.0, Number((prev * factor).toFixed(3)))));
+        return;
+      }
+
       if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
         const shift = Math.round(delta / 10);
@@ -966,8 +994,13 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     let cMax = Math.max(...auditCandles.map((c) => c.high));
                     const rng = cMax - cMin;
                     const pad = rng > 0 ? rng * 0.1 : (cMax || 100) * 0.02;
-                    cMin = cMin - pad + auditPricePan;
-                    cMax = cMax + pad + auditPricePan;
+
+                    // Apply auditPriceScale and vertical pan (TradingView style price axis scaling)
+                    const mid = (cMin + cMax) / 2 + auditPricePan;
+                    const baseHalf = rng / 2 + pad;
+                    const scaledHalf = baseHalf / auditPriceScale;
+                    cMin = mid - scaledHalf;
+                    cMax = mid + scaledHalf;
                     const effectiveRng = Math.max(0.0001, cMax - cMin);
 
                     const getY = (val: number) => topM + cH - ((val - cMin) / effectiveRng) * cH;
@@ -1212,11 +1245,11 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                           </g>
                         )}
 
-                        {/* Interactive Drag & Hover Layer */}
+                        {/* Interactive Drag & Hover Layer on Chart Canvas */}
                         <rect
                           x={0}
                           y={0}
-                          width={svgW}
+                          width={cW}
                           height={svgH}
                           fill="transparent"
                           className={`${auditDragging ? 'cursor-grabbing' : 'cursor-grab'} select-none touch-none`}
@@ -1360,6 +1393,126 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                             auditTouchDistRef.current = null;
                           }}
                         />
+
+                        {/* Dedicated Price Axis Drag-to-Zoom Layer */}
+                        <g className="audit-price-axis-zone select-none">
+                          <rect
+                            x={cW}
+                            y={0}
+                            width={rightM}
+                            height={svgH}
+                            fill={isAuditPriceAxisDragging ? 'rgba(56, 189, 248, 0.12)' : 'transparent'}
+                            className="cursor-ns-resize touch-none select-none"
+                            title="Drag vertically through price axis to zoom price scale • Double-click or click AUTO to reset"
+                            onPointerDown={(e) => {
+                              if (e.button !== 0) return;
+                              try {
+                                e.currentTarget.setPointerCapture(e.pointerId);
+                              } catch {
+                                // ignore
+                              }
+                              isAuditPriceAxisDraggingRef.current = true;
+                              setIsAuditPriceAxisDragging(true);
+                              auditPriceAxisDragStartRef.current = {
+                                y: e.clientY,
+                                initialPriceScale: auditPriceScale,
+                                initialPricePan: auditPricePan,
+                              };
+                            }}
+                            onPointerMove={(e) => {
+                              if (!isAuditPriceAxisDraggingRef.current) return;
+                              const dy = e.clientY - auditPriceAxisDragStartRef.current.y;
+                              // Dragging UP (negative dy) expands price movement/magnifies candles (zooms in)
+                              // Dragging DOWN (positive dy) compresses price movement/flattens candles (zooms out)
+                              const factor = Math.exp(-dy * 0.007);
+                              const nextScale = Math.max(
+                                0.2,
+                                Math.min(8.0, Number((auditPriceAxisDragStartRef.current.initialPriceScale * factor).toFixed(3)))
+                              );
+                              setAuditPriceScale(nextScale);
+                            }}
+                            onPointerUp={(e) => {
+                              try {
+                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                  e.currentTarget.releasePointerCapture(e.pointerId);
+                                }
+                              } catch {
+                                // ignore
+                              }
+                              isAuditPriceAxisDraggingRef.current = false;
+                              setIsAuditPriceAxisDragging(false);
+                            }}
+                            onPointerCancel={(e) => {
+                              try {
+                                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                  e.currentTarget.releasePointerCapture(e.pointerId);
+                                }
+                              } catch {
+                                // ignore
+                              }
+                              isAuditPriceAxisDraggingRef.current = false;
+                              setIsAuditPriceAxisDragging(false);
+                            }}
+                            onDoubleClick={handleAuditResetPriceScale}
+                            onTouchStart={(e) => {
+                              if (e.touches.length === 1) {
+                                isAuditPriceAxisDraggingRef.current = true;
+                                setIsAuditPriceAxisDragging(true);
+                                auditPriceAxisDragStartRef.current = {
+                                  y: e.touches[0].clientY,
+                                  initialPriceScale: auditPriceScale,
+                                  initialPricePan: auditPricePan,
+                                };
+                              }
+                            }}
+                            onTouchMove={(e) => {
+                              if (e.touches.length === 1 && isAuditPriceAxisDraggingRef.current) {
+                                const dy = e.touches[0].clientY - auditPriceAxisDragStartRef.current.y;
+                                const factor = Math.exp(-dy * 0.007);
+                                const nextScale = Math.max(
+                                  0.2,
+                                  Math.min(8.0, Number((auditPriceAxisDragStartRef.current.initialPriceScale * factor).toFixed(3)))
+                                );
+                                setAuditPriceScale(nextScale);
+                              }
+                            }}
+                            onTouchEnd={() => {
+                              isAuditPriceAxisDraggingRef.current = false;
+                              setIsAuditPriceAxisDragging(false);
+                            }}
+                          />
+
+                          {/* TradingView-style AUTO / Price Scale Reset Badge on Price Axis */}
+                          {(auditPriceScale !== 1.0 || isAuditPriceAxisDragging) && (
+                            <g
+                              className="cursor-pointer select-none"
+                              onClick={handleAuditResetPriceScale}
+                            >
+                              <rect
+                                x={cW + 6}
+                                y={topM + cH - 20}
+                                width={rightM - 12}
+                                height={18}
+                                fill={isAuditPriceAxisDragging ? '#0284c7' : '#0f172a'}
+                                stroke="#38bdf8"
+                                strokeWidth={1}
+                                rx={3}
+                              />
+                              <text
+                                x={cW + rightM / 2}
+                                y={topM + cH - 7}
+                                fill={isAuditPriceAxisDragging ? '#ffffff' : '#38bdf8'}
+                                fontSize={9.5}
+                                fontFamily={CHART_SANS_FONT}
+                                fontWeight="700"
+                                textAnchor="middle"
+                                style={{ fontFeatureSettings: '"tnum"' }}
+                              >
+                                {isAuditPriceAxisDragging ? `${Math.round(auditPriceScale * 100)}% ↕` : `AUTO ↺`}
+                              </text>
+                            </g>
+                          )}
+                        </g>
                       </svg>
                     );
                   })()}
@@ -1411,7 +1564,17 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                     >
                       Fit
                     </button>
-                    {(auditZoom !== 1.0 || auditEffectivePan > 0 || auditPricePan !== 0) && (
+                    {auditPriceScale !== 1.0 && (
+                      <button
+                        onClick={handleAuditResetPriceScale}
+                        className="px-1.5 py-0.5 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold transition flex items-center gap-0.5"
+                        title="Reset price scale to auto (Double-click price axis)"
+                      >
+                        <span>↕ {Math.round(auditPriceScale * 100)}%</span>
+                        <span className="text-amber-400">↺</span>
+                      </button>
+                    )}
+                    {(auditZoom !== 1.0 || auditEffectivePan > 0 || auditPricePan !== 0 || auditPriceScale !== 1.0) && (
                       <button
                         onClick={handleAuditResetView}
                         className="px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-300 border border-cyan-800/80 hover:bg-cyan-900 font-bold text-[10px] transition flex items-center gap-1 shadow-sm"

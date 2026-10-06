@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
+  Compass,
+  Crosshair,
   Eye,
   EyeOff,
   Hand,
@@ -276,24 +280,26 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     return rawCandles.slice(start, end);
   }, [rawCandles, effectivePan, visibleCount]);
 
-  // Mouse wheel zoom listener on chart container
-  useEffect(() => {
-    const el = svgContainerRef.current;
-    if (!el) return;
+  // Zoom & Pan Navigation Handlers
+  const handleZoomIn = useCallback(() => {
+    setZoom((prev) => Math.min(3.5, Number((prev * 1.2).toFixed(2))));
+  }, []);
 
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (e.deltaY < 0) {
-        // Zoom in
-        setZoom((prev) => Math.min(3.0, Number((prev * 1.15).toFixed(2))));
-      } else {
-        // Zoom out
-        setZoom((prev) => Math.max(0.4, Number((prev / 1.15).toFixed(2))));
-      }
-    };
+  const handleZoomOut = useCallback(() => {
+    setZoom((prev) => Math.max(0.25, Number((prev / 1.2).toFixed(2))));
+  }, []);
 
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+  const handlePanLeft = useCallback((count = 6) => {
+    setPanOffset((prev) => Math.min(maxPan, prev + count));
+  }, [maxPan]);
+
+  const handlePanRight = useCallback((count = 6) => {
+    setPanOffset((prev) => Math.max(0, prev - count));
+  }, []);
+
+  const handleJumpToLive = useCallback(() => {
+    setPanOffset(0);
+    setPricePanOffset(0);
   }, []);
 
   const handleResetView = useCallback(() => {
@@ -301,6 +307,79 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
     setPanOffset(0);
     setPricePanOffset(0);
   }, []);
+
+  const handlePreset = useCallback(
+    (preset: 'fit' | '100%' | 'focus') => {
+      if (preset === 'fit') {
+        const fitZoom = Math.max(0.25, Math.min(1.0, Number((baseCount / Math.max(1, rawCandles.length)).toFixed(2))));
+        setZoom(fitZoom);
+        setPanOffset(0);
+        setPricePanOffset(0);
+      } else if (preset === '100%') {
+        setZoom(1.0);
+        setPanOffset(0);
+        setPricePanOffset(0);
+      } else if (preset === 'focus') {
+        setZoom(2.2);
+        setPanOffset(0);
+        setPricePanOffset(0);
+      }
+    },
+    [baseCount, rawCandles.length]
+  );
+
+  // Mouse wheel zoom & trackpad horizontal pan listener on chart container
+  useEffect(() => {
+    const el = svgContainerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      // Trackpad horizontal swipe or Shift+Wheel: Pan horizontally
+      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        const shift = Math.round(delta / 10);
+        setPanOffset((prev) => Math.max(0, Math.min(maxPan, prev + shift)));
+      } else {
+        // Vertical wheel: Zoom in or out
+        if (e.deltaY < 0) {
+          setZoom((prev) => Math.min(3.5, Number((prev * 1.15).toFixed(2))));
+        } else {
+          setZoom((prev) => Math.max(0.25, Number((prev / 1.15).toFixed(2))));
+        }
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [maxPan]);
+
+  // Keyboard navigation for zoom & pan (Arrow keys, +, -, Home)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setPanOffset((prev) => Math.min(maxPan, prev + (e.shiftKey ? 15 : 4)));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setPanOffset((prev) => Math.max(0, prev - (e.shiftKey ? 15 : 4)));
+      } else if (e.key === 'ArrowUp' || e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        handleZoomIn();
+      } else if (e.key === 'ArrowDown' || e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        handleZoomOut();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        handleJumpToLive();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [maxPan, handleZoomIn, handleZoomOut, handleJumpToLive]);
 
   // Dimensions: dynamically adapt to mobile portrait (TradingView style tall vertical canvas) vs desktop panoramic
   const svgWidth = isPortraitMode ? 560 : isMaximized ? 1600 : 1200;
@@ -538,30 +617,48 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           {/* Zoom & Pan Navigation Controls */}
           <div className="flex items-center space-x-1 bg-slate-950 p-0.5 sm:p-1 rounded border border-slate-800 text-xs font-mono">
             <button
-              onClick={() => setZoom((prev) => Math.max(0.4, Number((prev / 1.15).toFixed(2))))}
-              className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center justify-center"
-              title="Zoom Out (or scroll down on chart)"
+              onClick={handleZoomOut}
+              className="p-1 sm:px-1.5 sm:py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center justify-center"
+              title="Zoom Out (- key or Wheel Down)"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
-            <span
-              className="px-1 text-[11px] text-cyan-400 font-bold min-w-[34px] text-center select-none"
-              title="Current Zoom Magnification"
+            <button
+              onClick={() => handlePreset('100%')}
+              className="px-1 text-[11px] text-cyan-400 font-bold min-w-[34px] text-center select-none hover:text-cyan-300 transition"
+              title="Current Zoom Magnification (Click for 100%)"
             >
               {Math.round(zoom * 100)}%
-            </span>
+            </button>
             <button
-              onClick={() => setZoom((prev) => Math.min(3.0, Number((prev * 1.15).toFixed(2))))}
-              className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center justify-center"
-              title="Zoom In (or scroll up on chart)"
+              onClick={handleZoomIn}
+              className="p-1 sm:px-1.5 sm:py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center justify-center"
+              title="Zoom In (+ key or Wheel Up)"
             >
               <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <div className="h-3 w-px bg-slate-800 mx-0.5" />
+            <button
+              onClick={() => handlePanLeft(6)}
+              disabled={effectivePan >= maxPan}
+              className="p-1 sm:px-1.5 sm:py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center"
+              title="Pan Left / History (Arrow Left or Drag Right)"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handlePanRight(6)}
+              disabled={effectivePan <= 0}
+              className="p-1 sm:px-1.5 sm:py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center"
+              title="Pan Right / Live (Arrow Right or Drag Left)"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
             {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0) && (
               <button
                 onClick={handleResetView}
-                className="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 font-bold text-[10.5px] transition flex items-center gap-1"
-                title="Reset Zoom & Pan to live view"
+                className="px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 font-bold text-[10.5px] transition flex items-center gap-1 shadow-sm"
+                title="Reset Zoom & Pan to live view (Home key)"
               >
                 <RotateCcw className="w-3 h-3" />
                 <span className="hidden sm:inline">Reset</span>
@@ -1585,13 +1682,18 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           {/* Interactive Mouse & Touch Tracking Layer - Smooth hover & pan/drag gesture support */}
           <rect
             x={0}
-            y={marginTop}
-            width={chartWidth}
-            height={chartHeight}
+            y={0}
+            width={svgWidth}
+            height={svgHeight}
             fill="transparent"
             className={`select-none touch-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
               if (e.button !== 0) return;
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {
+                // ignore
+              }
               isDraggingRef.current = true;
               setIsDragging(true);
               setDragMoved(false);
@@ -1602,7 +1704,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 initialPricePan: pricePanOffset,
               };
             }}
-            onMouseMove={(e) => {
+            onPointerMove={(e) => {
               const svgEl = e.currentTarget.ownerSVGElement;
               if (!svgEl) return;
               const pt = svgEl.createSVGPoint();
@@ -1613,6 +1715,10 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               const svgPt = pt.matrixTransform(ctm.inverse());
 
               if (isDraggingRef.current) {
+                const rect = svgEl.getBoundingClientRect();
+                const screenCandleSpacing = (rect.width * (chartWidth / svgWidth)) / Math.max(1, candles.length);
+                const screenChartHeight = rect.height * (chartHeight / svgHeight);
+
                 const dx = e.clientX - dragStartRef.current.x;
                 const dy = e.clientY - dragStartRef.current.y;
                 if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
@@ -1620,13 +1726,13 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 }
 
                 // Horizontal candle shifting: positive dx pulls earlier candles into view
-                const candleShift = Math.round(dx / Math.max(4, candleSpacing));
+                const candleShift = Math.round(dx / Math.max(2, screenCandleSpacing));
                 const newPan = Math.max(0, Math.min(maxPan, dragStartRef.current.initialPan + candleShift));
                 setPanOffset(newPan);
 
                 // Vertical dollar shifting
-                const pricePerPixel = (maxPrice - minPrice) / chartHeight;
-                const priceShift = dy * pricePerPixel;
+                const pricePerScreenPixel = (maxPrice - minPrice) / Math.max(1, screenChartHeight);
+                const priceShift = dy * pricePerScreenPixel;
                 setPricePanOffset(dragStartRef.current.initialPricePan + priceShift);
 
                 setHoverCandle(null);
@@ -1638,19 +1744,34 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   setHoverCandle(candles[idx]);
                   setHoverX(idx * candleSpacing + candleSpacing / 2);
                   setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
+                } else {
+                  setHoverCandle(null);
+                  setHoverX(null);
+                  setHoverY(null);
                 }
               }
             }}
-            onMouseUp={() => {
+            onPointerUp={(e) => {
+              try {
+                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                }
+              } catch {
+                // ignore
+              }
               isDraggingRef.current = false;
               setIsDragging(false);
             }}
-            onMouseLeave={() => {
+            onPointerCancel={(e) => {
+              try {
+                if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                }
+              } catch {
+                // ignore
+              }
               isDraggingRef.current = false;
               setIsDragging(false);
-              setHoverCandle(null);
-              setHoverX(null);
-              setHoverY(null);
             }}
             onDoubleClick={handleResetView}
             onTouchStart={(e) => {
@@ -1683,7 +1804,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 const factor = dist / touchDistRef.current;
                 if (Math.abs(factor - 1) > 0.04) {
                   setZoom((prev) =>
-                    Math.max(0.4, Math.min(3.0, Number((prev * (factor > 1 ? 1.05 : 0.95)).toFixed(2))))
+                    Math.max(0.25, Math.min(3.5, Number((prev * (factor > 1 ? 1.05 : 0.95)).toFixed(2))))
                   );
                   touchDistRef.current = dist;
                 }
@@ -1692,50 +1813,174 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
 
               // Single finger pan / drag
               if (e.touches.length === 1 && isDraggingRef.current) {
+                const svgEl = (e.currentTarget as SVGRectElement).ownerSVGElement;
+                const rect = svgEl?.getBoundingClientRect();
+                const screenCandleSpacing = rect ? (rect.width * (chartWidth / svgWidth)) / Math.max(1, candles.length) : candleSpacing;
+                const screenChartHeight = rect ? rect.height * (chartHeight / svgHeight) : chartHeight;
+
                 const dx = e.touches[0].clientX - dragStartRef.current.x;
                 const dy = e.touches[0].clientY - dragStartRef.current.y;
                 if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
                   setDragMoved(true);
                 }
 
-                const candleShift = Math.round(dx / Math.max(4, candleSpacing));
+                const candleShift = Math.round(dx / Math.max(2, screenCandleSpacing));
                 const newPan = Math.max(0, Math.min(maxPan, dragStartRef.current.initialPan + candleShift));
                 setPanOffset(newPan);
 
-                const pricePerPixel = (maxPrice - minPrice) / chartHeight;
-                const priceShift = dy * pricePerPixel;
+                const pricePerScreenPixel = (maxPrice - minPrice) / Math.max(1, screenChartHeight);
+                const priceShift = dy * pricePerScreenPixel;
                 setPricePanOffset(dragStartRef.current.initialPricePan + priceShift);
-
-                const svgEl = e.currentTarget.ownerSVGElement;
-                if (svgEl && !dragMoved) {
-                  const pt = svgEl.createSVGPoint();
-                  pt.x = e.touches[0].clientX;
-                  pt.y = e.touches[0].clientY;
-                  const ctm = svgEl.getScreenCTM();
-                  if (ctm) {
-                    const svgPt = pt.matrixTransform(ctm.inverse());
-                    if (svgPt.x >= 0 && svgPt.x <= chartWidth && candles.length > 0) {
-                      const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(svgPt.x / candleSpacing)));
-                      setHoverCandle(candles[idx]);
-                      setHoverX(idx * candleSpacing + candleSpacing / 2);
-                      setHoverY(Math.max(marginTop, Math.min(marginTop + chartHeight, svgPt.y)));
-                    }
-                  }
-                }
               }
             }}
             onTouchEnd={() => {
               isDraggingRef.current = false;
               setIsDragging(false);
               touchDistRef.current = null;
-              if (dragMoved) {
-                setHoverCandle(null);
-                setHoverX(null);
-                setHoverY(null);
-              }
             }}
           />
         </svg>
+
+        {/* Floating On-Canvas Chart Controls HUD (Bottom-Right) */}
+        <div className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 p-1 bg-slate-950/85 backdrop-blur-md border border-slate-800 rounded-lg shadow-xl text-xs font-mono select-none">
+          <button
+            onClick={() => handlePanLeft(6)}
+            disabled={effectivePan >= maxPan}
+            className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center"
+            title="Pan Left / History (Arrow Left)"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={handleZoomOut}
+            className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition flex items-center justify-center"
+            title="Zoom Out (- Key or Wheel Down)"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => handlePreset('100%')}
+            className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-cyan-400 font-bold text-[10.5px] border border-slate-800 transition min-w-[38px] text-center"
+            title="Click to reset zoom to 100%"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={handleZoomIn}
+            className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition flex items-center justify-center"
+            title="Zoom In (+ Key or Wheel Up)"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => handlePanRight(6)}
+            disabled={effectivePan <= 0}
+            className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center"
+            title="Pan Right / Live (Arrow Right)"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+          <div className="w-px h-3.5 bg-slate-800 mx-0.5" />
+          <button
+            onClick={() => handlePreset('fit')}
+            className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 text-[10px] font-semibold transition"
+            title="Fit All History on Screen"
+          >
+            Fit
+          </button>
+          {(zoom !== 1.0 || effectivePan > 0 || pricePanOffset !== 0) && (
+            <button
+              onClick={handleResetView}
+              className="px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-300 border border-cyan-800/80 hover:bg-cyan-900 font-bold text-[10px] transition flex items-center gap-1 shadow-sm"
+              title="Reset View to Live (Home Key)"
+            >
+              <RotateCcw className="w-2.5 h-2.5" />
+              <span>Reset</span>
+            </button>
+          )}
+        </div>
+
+        {/* Floating Panned Action Badge at Top-Center */}
+        {effectivePan > 0 && (
+          <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1 rounded-full bg-slate-950/90 border border-amber-500/50 text-amber-300 font-mono text-[11px] shadow-2xl backdrop-blur-md animate-fadeIn">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+            <span>Panned {effectivePan} bars back</span>
+            <button
+              onClick={handleJumpToLive}
+              className="ml-1 px-2 py-0.5 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[10px] transition flex items-center gap-1 shadow-sm"
+              title="Return to real-time live candlestick"
+            >
+              <span>Jump to Live</span>
+              <span>⏩</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Interactive Timeline Minimap / Pan Scrubber Bar */}
+      <div className="px-3 py-1.5 bg-slate-950/80 rounded-lg border border-slate-800 text-[11px] font-mono text-slate-400 flex flex-wrap items-center justify-between gap-2 shrink-0 select-none">
+        <div className="flex items-center gap-2 text-slate-300">
+          <span className="text-cyan-400 font-bold">TIMELINE:</span>
+          <span>
+            {candles.length > 0 && (
+              <>
+                {new Date(candles[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                {' — '}
+                {new Date(candles[candles.length - 1].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+              </>
+            )}
+          </span>
+          <span className="text-slate-600">|</span>
+          <span className="text-slate-400">
+            Window: <strong className="text-white">{candles.length}</strong> / {rawCandles.length} bars
+          </span>
+        </div>
+
+        {/* Quick Range / Zoom Presets */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-slate-500 text-[10px] hidden sm:inline">Presets:</span>
+          <button
+            onClick={() => handlePreset('fit')}
+            className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-[10.5px] transition"
+            title="View entire loaded dataset"
+          >
+            All ({rawCandles.length}B)
+          </button>
+          <button
+            onClick={() => handlePreset('100%')}
+            className={`px-2 py-0.5 rounded border text-[10.5px] transition ${
+              zoom === 1.0 && effectivePan === 0
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+            }`}
+            title="Standard 100% magnification"
+          >
+            100%
+          </button>
+          <button
+            onClick={() => handlePreset('focus')}
+            className={`px-2 py-0.5 rounded border text-[10.5px] transition ${
+              zoom > 2.0 && effectivePan === 0
+                ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
+            }`}
+            title="Focus close-up on active live bar"
+          >
+            Focus (2.2x)
+          </button>
+          {effectivePan > 0 && (
+            <button
+              onClick={handleJumpToLive}
+              className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-[10.5px] transition flex items-center gap-1"
+            >
+              <span>Live</span>
+              <span>⏩</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Profile Metrics Summary Bar - Adaptive for Mobile Portrait */}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -9,6 +9,8 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Coins,
   Copy,
@@ -18,10 +20,14 @@ import {
   Layers,
   Percent,
   Radio,
+  RotateCcw,
   Sliders,
+  Table,
   TrendingDown,
   TrendingUp,
   Wifi,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
 import { getBarDuration, getBarStartTime, useLiveTicker } from '../services/useLiveTicker';
@@ -62,10 +68,31 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
 
   // Active Audit Tab: 'session' (Current Session Granular Data) or 'mandates' (Pre-Analysis Mandates 1-6)
   const [activeTab, setActiveTab] = useState<'session' | 'mandates'>('session');
+  // View mode for Granular Candlestick Audit: 'table' or 'chart' or 'split'
+  const [auditViewMode, setAuditViewMode] = useState<'table' | 'chart' | 'split'>('chart');
   // Timeframe selector for Current Session Data
   const [selectedTimeframe, setSelectedTimeframe] = useState<ChartTimeframe>('15m');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [copiedCsv, setCopiedCsv] = useState(false);
+
+  // Zoom & Pan state for Audit Candlestick Chart
+  const [auditZoom, setAuditZoom] = useState<number>(1.0);
+  const [auditPan, setAuditPan] = useState<number>(0);
+  const [auditPricePan, setAuditPricePan] = useState<number>(0);
+  const [auditDragging, setAuditDragging] = useState<boolean>(false);
+  const [auditHoverCandle, setAuditHoverCandle] = useState<Candle | null>(null);
+  const [auditHoverX, setAuditHoverX] = useState<number | null>(null);
+  const [auditHoverY, setAuditHoverY] = useState<number | null>(null);
+
+  const auditContainerRef = useRef<HTMLDivElement>(null);
+  const auditDragStartRef = useRef<{
+    x: number;
+    y: number;
+    initialPan: number;
+    initialPricePan: number;
+  }>({ x: 0, y: 0, initialPan: 0, initialPricePan: 0 });
+  const isAuditDraggingRef = useRef<boolean>(false);
+  const auditTouchDistRef = useRef<number | null>(null);
 
   // Live WebSocket price feed for real-time audit verification
   const {
@@ -176,6 +203,123 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
     }
     return sorted;
   }, [dynamicCandles, sortOrder]);
+
+  // Reset audit pan on timeframe or symbol change
+  useEffect(() => {
+    setAuditPan(0);
+    setAuditPricePan(0);
+  }, [selectedTimeframe, symbol]);
+
+  // Windowing for Audit Candlestick Chart (Chronological order)
+  const auditBaseCount = 24;
+  const auditVisibleCount = Math.max(6, Math.min(dynamicCandles.length, Math.round(auditBaseCount / auditZoom)));
+  const auditMaxPan = Math.max(0, dynamicCandles.length - auditVisibleCount);
+  const auditEffectivePan = Math.max(0, Math.min(auditMaxPan, auditPan));
+
+  const auditCandles = useMemo(() => {
+    if (!dynamicCandles.length) return [];
+    const end = dynamicCandles.length - auditEffectivePan;
+    const start = Math.max(0, end - auditVisibleCount);
+    return dynamicCandles.slice(start, end);
+  }, [dynamicCandles, auditEffectivePan, auditVisibleCount]);
+
+  const handleAuditZoomIn = useCallback(() => {
+    setAuditZoom((prev) => Math.min(3.5, Number((prev * 1.2).toFixed(2))));
+  }, []);
+
+  const handleAuditZoomOut = useCallback(() => {
+    setAuditZoom((prev) => Math.max(0.25, Number((prev / 1.2).toFixed(2))));
+  }, []);
+
+  const handleAuditPanLeft = useCallback((count = 5) => {
+    setAuditPan((prev) => Math.min(auditMaxPan, prev + count));
+  }, [auditMaxPan]);
+
+  const handleAuditPanRight = useCallback((count = 5) => {
+    setAuditPan((prev) => Math.max(0, prev - count));
+  }, []);
+
+  const handleAuditResetView = useCallback(() => {
+    setAuditZoom(1.0);
+    setAuditPan(0);
+    setAuditPricePan(0);
+  }, []);
+
+  const handleAuditPreset = useCallback(
+    (preset: 'fit' | '100%' | 'focus') => {
+      if (preset === 'fit') {
+        const fitZoom = Math.max(
+          0.25,
+          Math.min(1.0, Number((auditBaseCount / Math.max(1, dynamicCandles.length)).toFixed(2)))
+        );
+        setAuditZoom(fitZoom);
+        setAuditPan(0);
+        setAuditPricePan(0);
+      } else if (preset === '100%') {
+        setAuditZoom(1.0);
+        setAuditPan(0);
+        setAuditPricePan(0);
+      } else if (preset === 'focus') {
+        setAuditZoom(2.0);
+        setAuditPan(0);
+        setAuditPricePan(0);
+      }
+    },
+    [auditBaseCount, dynamicCandles.length]
+  );
+
+  // Wheel listener for Audit Chart
+  useEffect(() => {
+    const el = auditContainerRef.current;
+    if (!el || auditViewMode === 'table') return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+        const shift = Math.round(delta / 10);
+        setAuditPan((prev) => Math.max(0, Math.min(auditMaxPan, prev + shift)));
+      } else {
+        if (e.deltaY < 0) {
+          setAuditZoom((prev) => Math.min(3.5, Number((prev * 1.15).toFixed(2))));
+        } else {
+          setAuditZoom((prev) => Math.max(0.25, Number((prev / 1.15).toFixed(2))));
+        }
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [auditMaxPan, auditViewMode]);
+
+  // Keyboard navigation for audit chart zoom & pan
+  useEffect(() => {
+    if (auditViewMode === 'table') return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setAuditPan((prev) => Math.min(auditMaxPan, prev + (e.shiftKey ? 12 : 4)));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setAuditPan((prev) => Math.max(0, prev - (e.shiftKey ? 12 : 4)));
+      } else if (e.key === 'ArrowUp' || e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        handleAuditZoomIn();
+      } else if (e.key === 'ArrowDown' || e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        handleAuditZoomOut();
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        handleAuditResetView();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [auditViewMode, auditMaxPan, handleAuditZoomIn, handleAuditZoomOut, handleAuditResetView]);
 
   // Aggregate metrics calculation for the chosen timeframe with live tick integration
   const sessionStats = useMemo(() => {
@@ -614,13 +758,52 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
           {/* Populated Columns Data Audit Table for Selected Timeframe */}
           <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
             <div className="flex flex-wrap items-center justify-between border-b border-slate-800 pb-3 gap-2">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2.5">
                 <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold text-[11px] border border-cyan-500/40">
                   {selectedTimeframe} FEED
                 </span>
                 <h3 className="text-sm font-semibold text-white font-sans">
                   Granular Candlestick Audit ({sessionCandles.length} Bars Populated)
                 </h3>
+                {/* View Mode Toggle: Chart, Split, Table */}
+                <div className="flex items-center bg-slate-950 p-0.5 rounded border border-slate-800 text-[11px] font-mono">
+                  <button
+                    onClick={() => setAuditViewMode('chart')}
+                    className={`px-2 py-0.5 rounded transition flex items-center gap-1 ${
+                      auditViewMode === 'chart'
+                        ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Interactive Candlestick Chart (Zoom & Pan)"
+                  >
+                    <BarChart3 className="w-3 h-3" />
+                    <span>Chart</span>
+                  </button>
+                  <button
+                    onClick={() => setAuditViewMode('split')}
+                    className={`px-2 py-0.5 rounded transition flex items-center gap-1 ${
+                      auditViewMode === 'split'
+                        ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Chart & Data Table Split View"
+                  >
+                    <Layers className="w-3 h-3" />
+                    <span>Split (Chart + Table)</span>
+                  </button>
+                  <button
+                    onClick={() => setAuditViewMode('table')}
+                    className={`px-2 py-0.5 rounded transition flex items-center gap-1 ${
+                      auditViewMode === 'table'
+                        ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Populated OHLCV Data Audit Table"
+                  >
+                    <Table className="w-3 h-3" />
+                    <span>Table</span>
+                  </button>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2.5">
                 <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-950 border border-emerald-500/30 text-[11px] font-mono shadow-[0_0_10px_rgba(16,185,129,0.15)]">
@@ -644,6 +827,562 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
               </div>
             </div>
 
+            {/* View Mode 1: Interactive Candlestick Chart with Zoom & Pan */}
+            {(auditViewMode === 'chart' || auditViewMode === 'split') && (
+              <div className="space-y-3">
+                {/* Audit Chart Controls Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950 p-2 rounded-lg border border-slate-800 text-xs font-mono">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-slate-400 text-[11px]">Zoom:</span>
+                    <button
+                      onClick={handleAuditZoomOut}
+                      className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition"
+                      title="Zoom Out (- key or Wheel Down)"
+                    >
+                      <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-900 text-cyan-400 font-bold text-[11px] min-w-[38px] text-center border border-slate-800">
+                      {Math.round(auditZoom * 100)}%
+                    </span>
+                    <button
+                      onClick={handleAuditZoomIn}
+                      className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 transition"
+                      title="Zoom In (+ key or Wheel Up)"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="w-px h-4 bg-slate-800 mx-0.5" />
+                    <button
+                      onClick={() => handleAuditPreset('fit')}
+                      className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 text-[10.5px] transition"
+                      title="Fit All 48 Bars in Window"
+                    >
+                      Fit 48
+                    </button>
+                    <button
+                      onClick={() => handleAuditPreset('100%')}
+                      className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 text-[10.5px] transition"
+                      title="Default 100% Zoom"
+                    >
+                      100%
+                    </button>
+                    <button
+                      onClick={() => handleAuditPreset('focus')}
+                      className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 text-[10.5px] transition"
+                      title="Focus In (2X Zoom)"
+                    >
+                      Focus
+                    </button>
+                    <div className="w-px h-4 bg-slate-800 mx-0.5" />
+                    <button
+                      onClick={() => handleAuditPanLeft(6)}
+                      disabled={auditEffectivePan >= auditMaxPan}
+                      className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                      title="Pan Left / History (Arrow Left or Drag Right)"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleAuditPanRight(6)}
+                      disabled={auditEffectivePan <= 0}
+                      className="p-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                      title="Pan Right / Live (Arrow Right or Drag Left)"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                    {(auditZoom !== 1.0 || auditEffectivePan > 0 || auditPricePan !== 0) && (
+                      <button
+                        onClick={handleAuditResetView}
+                        className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 font-bold text-[10.5px] transition flex items-center gap-1 ml-1"
+                        title="Reset Zoom & Pan View (Home Key)"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <span className="hidden sm:inline">
+                      Drag canvas to Pan | Wheel / Pinch to Zoom
+                    </span>
+                    <span>
+                      Window: <strong className="text-white">{auditCandles.length}</strong> / {dynamicCandles.length} bars
+                    </span>
+                    {auditEffectivePan > 0 && (
+                      <button
+                        onClick={() => {
+                          setAuditPan(0);
+                          setAuditPricePan(0);
+                        }}
+                        className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10.5px] hover:bg-amber-500/30 transition flex items-center gap-1"
+                        title="Jump to Current Live Bar"
+                      >
+                        <span>Jump to Live</span>
+                        <span>⏩</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* SVG Visual Canvas for Audit Candlesticks with Drag & Pan */}
+                <div
+                  ref={auditContainerRef}
+                  className="relative w-full overflow-hidden bg-slate-950 rounded-lg border border-slate-800 select-none flex items-center justify-center"
+                >
+                  {/* Floating Panned Banner when looking at historical bars */}
+                  {auditEffectivePan > 0 && (
+                    <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1 bg-amber-500/15 border border-amber-500/40 rounded-full text-xs font-mono text-amber-300 shadow-lg backdrop-blur-md">
+                      <span>PANNED: -{auditEffectivePan} BARS</span>
+                      <button
+                        onClick={() => {
+                          setAuditPan(0);
+                          setAuditPricePan(0);
+                        }}
+                        className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-bold text-[10.5px] hover:bg-amber-400 transition"
+                      >
+                        Jump to Live ⏩
+                      </button>
+                    </div>
+                  )}
+
+                  {(() => {
+                    if (!auditCandles.length) {
+                      return <div className="py-20 text-slate-500 text-xs font-mono">No bars available</div>;
+                    }
+
+                    const svgW = 1000;
+                    const svgH = 380;
+                    const rightM = 85;
+                    const topM = 25;
+                    const botM = 35;
+                    const cW = svgW - rightM;
+                    const cH = svgH - topM - botM;
+
+                    let cMin = Math.min(...auditCandles.map((c) => c.low));
+                    let cMax = Math.max(...auditCandles.map((c) => c.high));
+                    const rng = cMax - cMin;
+                    const pad = rng > 0 ? rng * 0.1 : (cMax || 100) * 0.02;
+                    cMin = cMin - pad + auditPricePan;
+                    cMax = cMax + pad + auditPricePan;
+                    const effectiveRng = Math.max(0.0001, cMax - cMin);
+
+                    const getY = (val: number) => topM + cH - ((val - cMin) / effectiveRng) * cH;
+                    const colW = cW / auditCandles.length;
+                    const barW = Math.max(3, colW * 0.72);
+
+                    return (
+                      <svg
+                        viewBox={`0 0 ${svgW} ${svgH}`}
+                        className="w-full h-auto select-none"
+                        style={{ maxHeight: '420px' }}
+                      >
+                        <defs>
+                          <linearGradient id="auditGreenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor="#34d399" stopOpacity="0.9" />
+                            <stop offset="100%" stopColor="#10b981" stopOpacity="0.75" />
+                          </linearGradient>
+                          <linearGradient id="auditRedGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.9" />
+                            <stop offset="100%" stopColor="#e11d48" stopOpacity="0.75" />
+                          </linearGradient>
+                        </defs>
+
+                        {/* Grid lines & price labels */}
+                        {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+                          const pVal = cMin + pct * effectiveRng;
+                          const yPos = getY(pVal);
+                          return (
+                            <g key={pct}>
+                              <line
+                                x1={0}
+                                y1={yPos}
+                                x2={cW}
+                                y2={yPos}
+                                stroke="#1e293b"
+                                strokeDasharray="3 3"
+                                strokeWidth={1}
+                              />
+                              <text
+                                x={cW + 8}
+                                y={yPos + 4}
+                                fill="#94a3b8"
+                                fontSize={10}
+                                fontFamily="monospace"
+                              >
+                                ${formatPrice(pVal)}
+                              </text>
+                            </g>
+                          );
+                        })}
+
+                        {/* Candlesticks */}
+                        {auditCandles.map((c, idx) => {
+                          const isLastInFull = c.timestamp === dynamicCandles[dynamicCandles.length - 1]?.timestamp;
+                          const effClose = isLastInFull && liveBar ? liveBar.close : isLastInFull ? activeLivePrice : c.close;
+                          const effHigh = isLastInFull && liveBar ? Math.max(c.high, liveBar.high, activeLivePrice) : isLastInFull ? Math.max(c.high, activeLivePrice) : c.high;
+                          const effLow = isLastInFull && liveBar && liveBar.low > 0 ? Math.min(c.low, liveBar.low, activeLivePrice) : isLastInFull ? Math.min(c.low, activeLivePrice) : c.low;
+                          const effOpen = isLastInFull && liveBar && liveBar.open > 0 ? liveBar.open : c.open;
+
+                          const isGreen = effClose >= effOpen;
+                          const xCenter = idx * colW + colW / 2;
+                          const yOpen = getY(effOpen);
+                          const yClose = getY(effClose);
+                          const yHigh = getY(effHigh);
+                          const yLow = getY(effLow);
+                          const bodyTop = Math.min(yOpen, yClose);
+                          const bodyH = Math.max(1.5, Math.abs(yClose - yOpen));
+
+                          return (
+                            <g key={c.timestamp + '-' + idx}>
+                              {/* Wick */}
+                              <line
+                                x1={xCenter}
+                                y1={yHigh}
+                                x2={xCenter}
+                                y2={yLow}
+                                stroke={isGreen ? '#34d399' : '#f43f5e'}
+                                strokeWidth={1.5}
+                              />
+                              {/* Body */}
+                              <rect
+                                x={xCenter - barW / 2}
+                                y={bodyTop}
+                                width={barW}
+                                height={bodyH}
+                                fill={isGreen ? 'url(#auditGreenGrad)' : 'url(#auditRedGrad)'}
+                                rx={1}
+                              />
+                              {/* Active Bar indicator */}
+                              {isLastInFull && (
+                                <circle
+                                  cx={xCenter}
+                                  cy={yClose}
+                                  r={3}
+                                  fill="#38bdf8"
+                                  className="animate-ping"
+                                />
+                              )}
+                              {/* Time label on bottom every few bars */}
+                              {idx % Math.max(1, Math.round(auditCandles.length / 6)) === 0 && (
+                                <text
+                                  x={xCenter}
+                                  y={topM + cH + 20}
+                                  fill="#64748b"
+                                  fontSize={9.5}
+                                  textAnchor="middle"
+                                  fontFamily="monospace"
+                                >
+                                  {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
+
+                        {/* Interactive Hover Crosshairs */}
+                        {auditHoverX !== null && (
+                          <g className="crosshair-layer" pointerEvents="none">
+                            <line
+                              x1={auditHoverX}
+                              y1={topM}
+                              x2={auditHoverX}
+                              y2={topM + cH}
+                              stroke="#64748b"
+                              strokeWidth={1}
+                              strokeDasharray="2 2"
+                              opacity={0.8}
+                            />
+                            {auditHoverY !== null && (
+                              <line
+                                x1={0}
+                                y1={auditHoverY}
+                                x2={cW}
+                                y2={auditHoverY}
+                                stroke="#64748b"
+                                strokeWidth={1}
+                                strokeDasharray="2 2"
+                                opacity={0.8}
+                              />
+                            )}
+                          </g>
+                        )}
+
+                        {/* Floating Hover Candlestick Stats HUD */}
+                        {auditHoverCandle && (
+                          <g pointerEvents="none">
+                            <rect
+                              x={10}
+                              y={topM + 4}
+                              width={cW - 20}
+                              height={24}
+                              fill="#020617"
+                              fillOpacity={0.92}
+                              stroke="#334155"
+                              strokeWidth={1}
+                              rx={4}
+                            />
+                            <text
+                              x={20}
+                              y={topM + 20}
+                              fill="#94a3b8"
+                              fontSize={10.5}
+                              fontFamily="monospace"
+                            >
+                              <tspan fill="#38bdf8" fontWeight="bold">
+                                {new Date(auditHoverCandle.timestamp).toISOString().replace('T', ' ').substring(0, 16)} UTC
+                              </tspan>
+                              <tspan dx="12">O: </tspan>
+                              <tspan fill="#ffffff" fontWeight="bold">${formatPrice(auditHoverCandle.open)}</tspan>
+                              <tspan dx="10">H: </tspan>
+                              <tspan fill="#ffffff" fontWeight="bold">${formatPrice(auditHoverCandle.high)}</tspan>
+                              <tspan dx="10">L: </tspan>
+                              <tspan fill="#ffffff" fontWeight="bold">${formatPrice(auditHoverCandle.low)}</tspan>
+                              <tspan dx="10">C: </tspan>
+                              <tspan fill={auditHoverCandle.close >= auditHoverCandle.open ? '#34d399' : '#f43f5e'} fontWeight="bold">
+                                ${formatPrice(auditHoverCandle.close)}
+                              </tspan>
+                              <tspan dx="10">Vol: </tspan>
+                              <tspan fill="#ffffff" fontWeight="bold">
+                                {auditHoverCandle.volume.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                              </tspan>
+                              {sessionStats.avg20Vol > 0 && (() => {
+                                const ratio = parseFloat((auditHoverCandle.volume / sessionStats.avg20Vol).toFixed(1));
+                                const color = ratio >= 1.3 ? '#34d399' : ratio <= 0.7 ? '#f43f5e' : '#ffffff';
+                                return (
+                                  <>
+                                    <tspan dx="10">Vol/20: </tspan>
+                                    <tspan fill={color} fontWeight="bold">{ratio.toFixed(1)}X</tspan>
+                                  </>
+                                );
+                              })()}
+                              <tspan dx="10">Chg: </tspan>
+                              <tspan
+                                fill={auditHoverCandle.close >= auditHoverCandle.open ? '#34d399' : '#f43f5e'}
+                                fontWeight="bold"
+                              >
+                                {auditHoverCandle.close >= auditHoverCandle.open ? '+' : ''}
+                                {(((auditHoverCandle.close - auditHoverCandle.open) / (auditHoverCandle.open || 1)) * 100).toFixed(2)}%
+                              </tspan>
+                            </text>
+                          </g>
+                        )}
+
+                        {/* Interactive Drag & Hover Layer */}
+                        <rect
+                          x={0}
+                          y={0}
+                          width={svgW}
+                          height={svgH}
+                          fill="transparent"
+                          className={`${auditDragging ? 'cursor-grabbing' : 'cursor-grab'} select-none touch-none`}
+                          onPointerDown={(e) => {
+                            if (e.button !== 0) return;
+                            try {
+                              e.currentTarget.setPointerCapture(e.pointerId);
+                            } catch {
+                              // ignore
+                            }
+                            isAuditDraggingRef.current = true;
+                            setAuditDragging(true);
+                            auditDragStartRef.current = {
+                              x: e.clientX,
+                              y: e.clientY,
+                              initialPan: auditPan,
+                              initialPricePan: auditPricePan,
+                            };
+                          }}
+                          onPointerMove={(e) => {
+                            const svgEl = e.currentTarget.ownerSVGElement;
+                            if (!svgEl) return;
+                            const rect = svgEl.getBoundingClientRect();
+                            const screenColW = (rect.width * (cW / svgW)) / Math.max(1, auditCandles.length);
+                            const screenChartH = rect.height * (cH / svgH);
+
+                            if (isAuditDraggingRef.current) {
+                              const dx = e.clientX - auditDragStartRef.current.x;
+                              const dy = e.clientY - auditDragStartRef.current.y;
+                              const shift = Math.round(dx / Math.max(2, screenColW));
+                              setAuditPan(Math.max(0, Math.min(auditMaxPan, auditDragStartRef.current.initialPan + shift)));
+                              const pShift = dy * (effectiveRng / Math.max(1, screenChartH));
+                              setAuditPricePan(auditDragStartRef.current.initialPricePan + pShift);
+
+                              setAuditHoverCandle(null);
+                              setAuditHoverX(null);
+                              setAuditHoverY(null);
+                            } else {
+                              const pt = svgEl.createSVGPoint();
+                              pt.x = e.clientX;
+                              pt.y = e.clientY;
+                              const ctm = svgEl.getScreenCTM();
+                              if (!ctm) return;
+                              const svgPt = pt.matrixTransform(ctm.inverse());
+
+                              if (svgPt.x >= 0 && svgPt.x <= cW && auditCandles.length > 0) {
+                                const idx = Math.max(0, Math.min(auditCandles.length - 1, Math.floor(svgPt.x / colW)));
+                                setAuditHoverCandle(auditCandles[idx]);
+                                setAuditHoverX(idx * colW + colW / 2);
+                                setAuditHoverY(Math.max(topM, Math.min(topM + cH, svgPt.y)));
+                              } else {
+                                setAuditHoverCandle(null);
+                                setAuditHoverX(null);
+                                setAuditHoverY(null);
+                              }
+                            }
+                          }}
+                          onPointerLeave={() => {
+                            if (!isAuditDraggingRef.current) {
+                              setAuditHoverCandle(null);
+                              setAuditHoverX(null);
+                              setAuditHoverY(null);
+                            }
+                          }}
+                          onPointerUp={(e) => {
+                            try {
+                              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                e.currentTarget.releasePointerCapture(e.pointerId);
+                              }
+                            } catch {
+                              // ignore
+                            }
+                            isAuditDraggingRef.current = false;
+                            setAuditDragging(false);
+                          }}
+                          onPointerCancel={(e) => {
+                            try {
+                              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                                e.currentTarget.releasePointerCapture(e.pointerId);
+                              }
+                            } catch {
+                              // ignore
+                            }
+                            isAuditDraggingRef.current = false;
+                            setAuditDragging(false);
+                          }}
+                          onDoubleClick={handleAuditResetView}
+                          onTouchStart={(e) => {
+                            if (e.touches.length === 2) {
+                              const dx = e.touches[0].clientX - e.touches[1].clientX;
+                              const dy = e.touches[0].clientY - e.touches[1].clientY;
+                              auditTouchDistRef.current = Math.hypot(dx, dy);
+                              isAuditDraggingRef.current = false;
+                              setAuditDragging(false);
+                              return;
+                            }
+                            if (e.touches.length === 1) {
+                              isAuditDraggingRef.current = true;
+                              setAuditDragging(true);
+                              auditDragStartRef.current = {
+                                x: e.touches[0].clientX,
+                                y: e.touches[0].clientY,
+                                initialPan: auditPan,
+                                initialPricePan: auditPricePan,
+                              };
+                            }
+                          }}
+                          onTouchMove={(e) => {
+                            // Pinch to zoom
+                            if (e.touches.length === 2 && auditTouchDistRef.current) {
+                              const dx = e.touches[0].clientX - e.touches[1].clientX;
+                              const dy = e.touches[0].clientY - e.touches[1].clientY;
+                              const dist = Math.hypot(dx, dy);
+                              const factor = dist / auditTouchDistRef.current;
+                              if (Math.abs(factor - 1) > 0.04) {
+                                setAuditZoom((prev) =>
+                                  Math.max(0.25, Math.min(3.5, Number((prev * (factor > 1 ? 1.05 : 0.95)).toFixed(2))))
+                                );
+                                auditTouchDistRef.current = dist;
+                              }
+                              return;
+                            }
+                            // Single finger pan
+                            if (e.touches.length === 1 && isAuditDraggingRef.current) {
+                              const svgEl = (e.currentTarget as SVGRectElement).ownerSVGElement;
+                              const rect = svgEl?.getBoundingClientRect();
+                              const screenColW = rect ? (rect.width * (cW / svgW)) / Math.max(1, auditCandles.length) : colW;
+                              const screenChartH = rect ? rect.height * (cH / svgH) : cH;
+
+                              const dx = e.touches[0].clientX - auditDragStartRef.current.x;
+                              const dy = e.touches[0].clientY - auditDragStartRef.current.y;
+                              const shift = Math.round(dx / Math.max(2, screenColW));
+                              setAuditPan(Math.max(0, Math.min(auditMaxPan, auditDragStartRef.current.initialPan + shift)));
+                              const pShift = dy * (effectiveRng / Math.max(1, screenChartH));
+                              setAuditPricePan(auditDragStartRef.current.initialPricePan + pShift);
+                            }
+                          }}
+                          onTouchEnd={() => {
+                            isAuditDraggingRef.current = false;
+                            setAuditDragging(false);
+                            auditTouchDistRef.current = null;
+                          }}
+                        />
+                      </svg>
+                    );
+                  })()}
+
+                  {/* Floating On-Canvas Chart Controls HUD (Bottom-Right) */}
+                  <div className="absolute bottom-2.5 right-2.5 z-10 flex items-center gap-1 p-1 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded-lg shadow-xl text-xs font-mono select-none">
+                    <button
+                      onClick={() => handleAuditPanLeft(6)}
+                      disabled={auditEffectivePan >= auditMaxPan}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center"
+                      title="Pan Left / History (Arrow Left)"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={handleAuditZoomOut}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition flex items-center justify-center"
+                      title="Zoom Out (- key or Wheel Down)"
+                    >
+                      <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleAuditPreset('100%')}
+                      className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-cyan-400 font-bold text-[10.5px] border border-slate-800 transition min-w-[38px] text-center"
+                      title="Click to reset zoom to 100%"
+                    >
+                      {Math.round(auditZoom * 100)}%
+                    </button>
+                    <button
+                      onClick={handleAuditZoomIn}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition flex items-center justify-center"
+                      title="Zoom In (+ key or Wheel Up)"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleAuditPanRight(6)}
+                      disabled={auditEffectivePan <= 0}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center justify-center"
+                      title="Pan Right / Live (Arrow Right)"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="w-px h-3.5 bg-slate-800 mx-0.5" />
+                    <button
+                      onClick={() => handleAuditPreset('fit')}
+                      className="px-1.5 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 text-[10px] font-semibold transition"
+                      title="Fit All 48 Bars"
+                    >
+                      Fit
+                    </button>
+                    {(auditZoom !== 1.0 || auditEffectivePan > 0 || auditPricePan !== 0) && (
+                      <button
+                        onClick={handleAuditResetView}
+                        className="px-1.5 py-0.5 rounded bg-cyan-950/90 text-cyan-300 border border-cyan-800/80 hover:bg-cyan-900 font-bold text-[10px] transition flex items-center gap-1 shadow-sm"
+                        title="Reset View to Live (Home Key)"
+                      >
+                        <RotateCcw className="w-2.5 h-2.5" />
+                        <span>Reset</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* View Mode 2: Audit Table */}
+            {(auditViewMode === 'table' || auditViewMode === 'split') && (
             <div className="overflow-x-auto rounded-lg border border-slate-800">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -793,6 +1532,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                 </tbody>
               </table>
             </div>
+            )}
           </section>
         </div>
       )}

@@ -356,19 +356,19 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
         dataSource = 'Binance Public REST v3 (PAXG Proxy for Gold)';
         const [klineRes, tickerRes, hourRes, m15Res, m5Res] = await Promise.all([
           fetchWithTimeout(
-            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1d&limit=30`
+            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1d&limit=60`
           ),
           fetchWithTimeout(
             `https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`
           ),
           fetchWithTimeout(
-            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1h&limit=48`
+            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1h&limit=120`
           ),
           fetchWithTimeout(
-            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=15m&limit=48`
+            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=15m&limit=120`
           ).catch(() => null),
           fetchWithTimeout(
-            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=5m&limit=48`
+            `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=5m&limit=120`
           ).catch(() => null),
         ]);
 
@@ -450,19 +450,19 @@ export async function fetchLiveMarketData(symbol: TickerSymbol): Promise<RawMark
 
     const [klineRes, tickerRes, hourRes, fifteenRes, fiveRes] = await Promise.all([
       fetchWithTimeout(
-        `${baseUrl}/klines?symbol=${binancePair}&interval=1d&limit=30`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=1d&limit=60`
       ),
       fetchWithTimeout(
         `${baseUrl}/ticker/24hr?symbol=${binancePair}`
       ),
       fetchWithTimeout(
-        `${baseUrl}/klines?symbol=${binancePair}&interval=1h&limit=48`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=1h&limit=120`
       ),
       fetchWithTimeout(
-        `${baseUrl}/klines?symbol=${binancePair}&interval=15m&limit=48`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=15m&limit=120`
       ).catch(() => null),
       fetchWithTimeout(
-        `${baseUrl}/klines?symbol=${binancePair}&interval=5m&limit=48`
+        `${baseUrl}/klines?symbol=${binancePair}&interval=5m&limit=120`
       ).catch(() => null),
     ]);
 

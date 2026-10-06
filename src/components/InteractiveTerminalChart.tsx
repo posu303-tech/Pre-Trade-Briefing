@@ -63,12 +63,16 @@ export const formatChartPrice = (val: number | undefined | null): string => {
   return val.toFixed(2);
 };
 
+// Clean sans-serif typeface with large x-heights and open letter forms (Plus Jakarta Sans & Inter)
+export const CHART_SANS_FONT =
+  "'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
 // Anti-Collision Relaxation: Guarantees labels never overlap by pushing adjacent labels apart
 function resolveCollisions(
   labels: PositionedLabel[],
   minY: number,
   maxY: number,
-  minGap = 24
+  minGap = 28
 ): PositionedLabel[] {
   if (labels.length === 0) return [];
   if (labels.length === 1) {
@@ -76,31 +80,41 @@ function resolveCollisions(
   }
 
   // Clone and sort by nominal Y
-  const sorted = labels.map((l) => ({
-    ...l,
-    y: Math.max(minY, Math.min(maxY, l.nominalY)),
-  })).sort((a, b) => a.nominalY - b.nominalY);
+  const sorted = labels
+    .map((l) => ({
+      ...l,
+      y: Math.max(minY, Math.min(maxY, l.nominalY)),
+    }))
+    .sort((a, b) => a.nominalY - b.nominalY);
 
-  // Pass 1: push down
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].y < sorted[i - 1].y + minGap) {
-      sorted[i].y = sorted[i - 1].y + minGap;
-    }
-  }
-
-  // Pass 2: push up if exceeding maxY
-  if (sorted[sorted.length - 1].y > maxY) {
-    sorted[sorted.length - 1].y = maxY;
-    for (let i = sorted.length - 2; i >= 0; i--) {
-      if (sorted[i].y > sorted[i + 1].y - minGap) {
-        sorted[i].y = sorted[i + 1].y - minGap;
+  // Multi-pass iterative relaxation to enforce strict non-overlapping distance between all labels
+  for (let pass = 0; pass < 3; pass++) {
+    // Pass 1: push down
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].y < sorted[i - 1].y + minGap) {
+        sorted[i].y = sorted[i - 1].y + minGap;
       }
     }
-  }
 
-  // Pass 3: ensure none above minY
-  for (let i = 0; i < sorted.length; i++) {
-    sorted[i].y = Math.max(minY, Math.min(maxY, sorted[i].y));
+    // Pass 2: push up if exceeding maxY
+    if (sorted[sorted.length - 1].y > maxY) {
+      sorted[sorted.length - 1].y = maxY;
+      for (let i = sorted.length - 2; i >= 0; i--) {
+        if (sorted[i].y > sorted[i + 1].y - minGap) {
+          sorted[i].y = sorted[i + 1].y - minGap;
+        }
+      }
+    }
+
+    // Pass 3: ensure none above minY
+    if (sorted[0].y < minY) {
+      sorted[0].y = minY;
+      for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].y < sorted[i - 1].y + minGap) {
+          sorted[i].y = sorted[i - 1].y + minGap;
+        }
+      }
+    }
   }
 
   return sorted;
@@ -907,6 +921,13 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
           {/* Grid lines & Right Price Ticks */}
           {yTicks.map((price, idx) => {
             const y = priceToY(price);
+            if (y < marginTop + 6 || y > marginTop + chartHeight - 6) return null;
+
+            // Compute live price tag collision zone (covers volume badge above, live price tag, and countdown badge below)
+            const yLive = priceToY(livePrice);
+            const clampedLiveY = Math.min(Math.max(marginTop + 24, yLive), chartHeight - 32);
+            const isNearLiveTag = y >= clampedLiveY - 38 && y <= clampedLiveY + 56;
+
             return (
               <g key={idx}>
                 <line
@@ -918,17 +939,21 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   strokeDasharray="3 3"
                   strokeWidth={1}
                 />
-                {/* Price labels on right margin - crisp, enlarged and high contrast for mobile devices */}
-                <text
-                  x={chartWidth + profileWidth + 8}
-                  y={y + (isMobileView ? 5 : 4.5)}
-                  fill="#f8fafc"
-                  fontSize={isMobileView ? 14 : 12.5}
-                  fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                  fontWeight="bold"
-                >
-                  ${formatChartPrice(price)}
-                </text>
+                {/* Price labels on right margin - crisp sans-serif, non-overlapping with live price tag */}
+                {!isNearLiveTag && (
+                  <text
+                    x={chartWidth + profileWidth + 8}
+                    y={y + (isMobileView ? 4.5 : 4)}
+                    fill="#94a3b8"
+                    fontSize={isMobileView ? 13 : 11.5}
+                    fontFamily={CHART_SANS_FONT}
+                    fontWeight="600"
+                    letterSpacing="0.01em"
+                    style={{ fontFeatureSettings: '"tnum"' }}
+                  >
+                    ${formatChartPrice(price)}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -967,11 +992,13 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   />
                   <text
                     x={16}
-                    y={Math.min(yHigh, yLow) + (isMobileView ? 18 : 16.5)}
+                    y={Math.min(yHigh, yLow) + (isMobileView ? 17.5 : 16)}
                     fill={isBull ? '#34d399' : '#f87171'}
-                    fontSize={isMobileView ? 13 : 11.5}
-                    fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                    fontWeight="bold"
+                    fontSize={isMobileView ? 12.5 : 11}
+                    fontFamily={CHART_SANS_FONT}
+                    fontWeight="700"
+                    letterSpacing="0.01em"
+                    style={{ fontFeatureSettings: '"tnum"' }}
                   >
                     Untested {gap.type.replace('_', ' ')} (${formatExactPrice(gap.lowPrice)} - ${formatExactPrice(gap.highPrice)})
                   </text>
@@ -1032,7 +1059,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {pivotLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
                 const badgeWidth = isMobileView ? 146 : 142;
-                const badgeHeight = isMobileView ? 28 : 25;
+                const badgeHeight = isMobileView ? 27 : 24;
                 const badgeX = chartWidth - badgeWidth - 4;
                 return (
                   <g key={lbl.id} className="pivot-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
@@ -1043,7 +1070,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={chartWidth - 6}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={isMobileView ? 1.75 : 1.5}
+                        strokeWidth={isMobileView ? 1.5 : 1.2}
                         strokeDasharray="2 2"
                       />
                     )}
@@ -1054,18 +1081,20 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                       height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={isMobileView ? 1.75 : 1.5}
+                      strokeWidth={isMobileView ? 1.5 : 1.2}
                       rx={4}
                       opacity={0.98}
                     />
                     <text
                       x={badgeX + badgeWidth - 8}
-                      y={lbl.y + (isMobileView ? 5 : 4.5)}
+                      y={lbl.y + (isMobileView ? 4.5 : 4)}
                       fill={lbl.color}
-                      fontSize={isMobileView ? 14 : 12.5}
-                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                      fontWeight="bold"
+                      fontSize={isMobileView ? 13 : 11.5}
+                      fontFamily={CHART_SANS_FONT}
+                      fontWeight="700"
                       textAnchor="end"
+                      letterSpacing="0.01em"
+                      style={{ fontFeatureSettings: '"tnum"' }}
                     >
                       {lbl.text}
                     </text>
@@ -1110,8 +1139,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {/* Anti-Overlap Resolved Left-Side VWAP Badges */}
               {leftLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
-                const badgeWidth = isMobileView ? 204 : 198;
-                const badgeHeight = isMobileView ? 28 : 25;
+                const badgeWidth = isMobileView ? 200 : 192;
+                const badgeHeight = isMobileView ? 27 : 24;
                 const badgeX = 8;
                 return (
                   <g key={lbl.id} className="vwap-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
@@ -1122,7 +1151,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={badgeX + badgeWidth + 6}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={isMobileView ? 1.75 : 1.5}
+                        strokeWidth={isMobileView ? 1.5 : 1.2}
                         strokeDasharray="2 2"
                       />
                     )}
@@ -1133,18 +1162,20 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                       height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={isMobileView ? 1.75 : 1.5}
+                      strokeWidth={isMobileView ? 1.5 : 1.2}
                       rx={4}
                       opacity={0.98}
                     />
                     <text
                       x={badgeX + 8}
-                      y={lbl.y + (isMobileView ? 5 : 4.5)}
+                      y={lbl.y + (isMobileView ? 4.5 : 4)}
                       fill={lbl.color}
-                      fontSize={isMobileView ? 14 : 12.5}
-                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                      fontWeight="bold"
+                      fontSize={isMobileView ? 13 : 11.5}
+                      fontFamily={CHART_SANS_FONT}
+                      fontWeight="700"
                       textAnchor="start"
+                      letterSpacing="0.01em"
+                      style={{ fontFeatureSettings: '"tnum"' }}
                     >
                       {lbl.text}
                     </text>
@@ -1181,8 +1212,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
               {/* Anti-Overlap Resolved MA Badges in Dedicated Column to Left of Pivots */}
               {maLabels.map((lbl) => {
                 const isShifted = Math.abs(lbl.y - lbl.nominalY) > 3;
-                const badgeWidth = isMobileView ? 156 : 150;
-                const badgeHeight = isMobileView ? 28 : 25;
+                const badgeWidth = isMobileView ? 152 : 144;
+                const badgeHeight = isMobileView ? 27 : 24;
                 const badgeX = chartWidth - (isMobileView ? 152 : 152) - badgeWidth;
                 return (
                   <g key={lbl.id} className="ma-label-badge" pointerEvents="none" filter="url(#badgeShadow)">
@@ -1193,7 +1224,7 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         x2={badgeX + badgeWidth + 6}
                         y2={lbl.y}
                         stroke={lbl.color}
-                        strokeWidth={isMobileView ? 1.75 : 1.5}
+                        strokeWidth={isMobileView ? 1.5 : 1.2}
                         strokeDasharray="2 2"
                       />
                     )}
@@ -1204,18 +1235,20 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                       height={badgeHeight}
                       fill="#020617"
                       stroke={lbl.color}
-                      strokeWidth={isMobileView ? 1.75 : 1.5}
+                      strokeWidth={isMobileView ? 1.5 : 1.2}
                       rx={4}
                       opacity={0.98}
                     />
                     <text
                       x={badgeX + badgeWidth - 8}
-                      y={lbl.y + (isMobileView ? 5 : 4.5)}
+                      y={lbl.y + (isMobileView ? 4.5 : 4)}
                       fill={lbl.color}
-                      fontSize={isMobileView ? 13.5 : 12}
-                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                      fontWeight="bold"
+                      fontSize={isMobileView ? 12.5 : 11}
+                      fontFamily={CHART_SANS_FONT}
+                      fontWeight="700"
                       textAnchor="end"
+                      letterSpacing="0.01em"
+                      style={{ fontFeatureSettings: '"tnum"' }}
                     >
                       {lbl.text}
                     </text>
@@ -1251,43 +1284,60 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
             })}
           </g>
 
-          {/* Bottom X-Axis Time Marks */}
+          {/* Bottom X-Axis Time Marks with guaranteed non-overlapping spacing */}
           <g className="time-axis-layer select-none" pointerEvents="none">
-            {candles.map((c, i) => {
-              const step = visibleCount > 32 ? 6 : visibleCount > 18 ? 4 : 2;
-              if (i % step !== 0 && i !== candles.length - 1) return null;
-              const x = i * candleSpacing + candleSpacing / 2;
-              const d = new Date(c.timestamp);
-              const label =
-                timeframe === '1D'
-                  ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                  : d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+            {(() => {
+              const minTimeGap = 68; // Minimum pixel gap between adjacent time labels to prevent overlap
+              const renderedXs: number[] = [];
 
-              return (
-                <g key={`time-${c.timestamp}`}>
-                  <line
-                    x1={x}
-                    y1={marginTop + chartHeight}
-                    x2={x}
-                    y2={marginTop + chartHeight + 5}
-                    stroke="#94a3b8"
-                    strokeWidth={1.5}
-                    shapeRendering="crispEdges"
-                  />
-                  <text
-                    x={x}
-                    y={marginTop + chartHeight + (isMobileView ? 21 : 19)}
-                    fill="#f8fafc"
-                    fontSize={isMobileView ? 13.5 : 11.5}
-                    fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                  >
-                    {label}
-                  </text>
-                </g>
-              );
-            })}
+              return candles.map((c, i) => {
+                const x = i * candleSpacing + candleSpacing / 2;
+
+                // Ensure at least minTimeGap pixels from the previous rendered label
+                if (renderedXs.length > 0 && x - renderedXs[renderedXs.length - 1] < minTimeGap) {
+                  return null;
+                }
+
+                // Avoid collision with chart right margin if close
+                if (chartWidth - x < minTimeGap / 2 && i !== candles.length - 1) {
+                  return null;
+                }
+
+                renderedXs.push(x);
+                const d = new Date(c.timestamp);
+                const label =
+                  timeframe === '1D'
+                    ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                    : d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+                return (
+                  <g key={`time-${c.timestamp}`}>
+                    <line
+                      x1={x}
+                      y1={marginTop + chartHeight}
+                      x2={x}
+                      y2={marginTop + chartHeight + 4}
+                      stroke="#475569"
+                      strokeWidth={1}
+                      shapeRendering="crispEdges"
+                    />
+                    <text
+                      x={x}
+                      y={marginTop + chartHeight + (isMobileView ? 19 : 17)}
+                      fill="#94a3b8"
+                      fontSize={isMobileView ? 12 : 11}
+                      fontFamily={CHART_SANS_FONT}
+                      fontWeight="600"
+                      letterSpacing="0.01em"
+                      textAnchor="middle"
+                      style={{ fontFeatureSettings: '"tnum"' }}
+                    >
+                      {label}
+                    </text>
+                  </g>
+                );
+              });
+            })()}
           </g>
 
           {/* Candlesticks */}
@@ -1349,8 +1399,9 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                   y={marginTop + 14}
                   fill="#94a3b8"
                   fontSize={isPortraitMode ? 9.5 : 11}
-                  fontFamily="monospace"
-                  fontWeight="bold"
+                  fontFamily={CHART_SANS_FONT}
+                  fontWeight="700"
+                  letterSpacing="0.04em"
                 >
                   VOLUME PROFILE (70% VA)
                 </text>
@@ -1394,8 +1445,8 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                           y={y + 3}
                           fill="#fbbf24"
                           fontSize={10}
-                          fontFamily="monospace"
-                          fontWeight="bold"
+                          fontFamily={CHART_SANS_FONT}
+                          fontWeight="700"
                         >
                           POC
                         </text>
@@ -1437,12 +1488,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                     />
                     <text
                       x={badgeX + 6}
-                      y={lbl.y + (isMobileView ? 5 : 4.5)}
+                      y={lbl.y + (isMobileView ? 4.5 : 4)}
                       fill={lbl.color}
-                      fontSize={isMobileView ? 13.5 : 12}
-                      fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                      fontWeight="bold"
+                      fontSize={isMobileView ? 12.5 : 11}
+                      fontFamily={CHART_SANS_FONT}
+                      fontWeight="700"
                       textAnchor="start"
+                      letterSpacing="0.01em"
+                      style={{ fontFeatureSettings: '"tnum"' }}
                     >
                       {lbl.text}
                     </text>
@@ -1487,12 +1540,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                 />
                 <text
                   x={lastX}
-                  y={badgeY + (isMobileView ? 17 : 15)}
+                  y={badgeY + (isMobileView ? 16.5 : 14.5)}
                   fill="#38bdf8"
-                  fontSize={isMobileView ? 13 : 11}
-                  fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                  fontWeight="bold"
+                  fontSize={isMobileView ? 12.5 : 11}
+                  fontFamily={CHART_SANS_FONT}
+                  fontWeight="700"
                   textAnchor="middle"
+                  letterSpacing="0.02em"
+                  style={{ fontFeatureSettings: '"tnum"' }}
                 >
                   LIVE • ⏱ {countdown.formatted}
                 </text>
@@ -1589,12 +1644,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                           />
                           <text
                             x={tagWidth / 2}
-                            y={-10}
+                            y={-9}
                             fill="#38bdf8"
-                            fontSize={isMobileView ? 12 : 11}
-                            fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                            fontWeight="bold"
+                            fontSize={isMobileView ? 11.5 : 10.5}
+                            fontFamily={CHART_SANS_FONT}
+                            fontWeight="700"
                             textAnchor="middle"
+                            letterSpacing="0.01em"
+                            style={{ fontFeatureSettings: '"tnum"' }}
                           >
                             {timeframe} Vol: {volumeFormatted}
                           </text>
@@ -1611,12 +1668,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         />
                         <text
                           x={tagWidth / 2}
-                          y={tagHeight / 2 + 5}
+                          y={tagHeight / 2 + 4.5}
                           fill="#ffffff"
-                          fontSize={isMobileView ? 14.5 : 12.5}
-                          fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                          fontWeight="bold"
+                          fontSize={isMobileView ? 14 : 12.5}
+                          fontFamily={CHART_SANS_FONT}
+                          fontWeight="800"
                           textAnchor="middle"
+                          letterSpacing="0.01em"
+                          style={{ fontFeatureSettings: '"tnum"' }}
                         >
                           ${formatExactPrice(livePrice)}
                         </text>
@@ -1634,12 +1693,14 @@ export const InteractiveTerminalChart: React.FC<InteractiveTerminalChartProps> =
                         />
                         <text
                           x={tagWidth / 2}
-                          y={tagHeight + (isMobileView ? 18 : 17.5)}
+                          y={tagHeight + (isMobileView ? 17.5 : 16)}
                           fill="#fbbf24"
-                          fontSize={isMobileView ? 12 : 11}
-                          fontFamily="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
-                          fontWeight="bold"
+                          fontSize={isMobileView ? 11.5 : 10.5}
+                          fontFamily={CHART_SANS_FONT}
+                          fontWeight="700"
                           textAnchor="middle"
+                          letterSpacing="0.01em"
+                          style={{ fontFeatureSettings: '"tnum"' }}
                         >
                           ⏱ {countdown.formatted}
                         </text>

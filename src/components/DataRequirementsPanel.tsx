@@ -32,6 +32,10 @@ import {
 import { Candle, ChartTimeframe, PreMarketBrief } from '../types';
 import { getBarDuration, getBarStartTime, useLiveTicker } from '../services/useLiveTicker';
 
+// Clean sans-serif typeface with large x-heights and open letter forms (Plus Jakarta Sans & Inter)
+export const CHART_SANS_FONT =
+  "'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
 export const formatPrice = (val: number | undefined | null): string => {
   if (val === undefined || val === null || isNaN(val)) return '--';
   const p = Math.abs(val);
@@ -987,7 +991,7 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                           </linearGradient>
                         </defs>
 
-                        {/* Grid lines & price labels */}
+                        {/* Grid lines & price labels - clean sans-serif with tabular figures */}
                         {[0, 0.25, 0.5, 0.75, 1].map((pct) => {
                           const pVal = cMin + pct * effectiveRng;
                           const yPos = getY(pVal);
@@ -1006,8 +1010,11 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                                 x={cW + 8}
                                 y={yPos + 4}
                                 fill="#94a3b8"
-                                fontSize={10}
-                                fontFamily="monospace"
+                                fontSize={10.5}
+                                fontFamily={CHART_SANS_FONT}
+                                fontWeight="600"
+                                letterSpacing="0.01em"
+                                style={{ fontFeatureSettings: '"tnum"' }}
                               >
                                 ${formatPrice(pVal)}
                               </text>
@@ -1062,22 +1069,58 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                                   className="animate-ping"
                                 />
                               )}
-                              {/* Time label on bottom every few bars */}
-                              {idx % Math.max(1, Math.round(auditCandles.length / 6)) === 0 && (
-                                <text
-                                  x={xCenter}
-                                  y={topM + cH + 20}
-                                  fill="#64748b"
-                                  fontSize={9.5}
-                                  textAnchor="middle"
-                                  fontFamily="monospace"
-                                >
-                                  {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-                                </text>
-                              )}
                             </g>
                           );
                         })}
+
+                        {/* Bottom Time Marks with guaranteed non-overlapping spacing */}
+                        {(() => {
+                          const minTimeGap = 70; // Minimum gap between adjacent time marks
+                          const renderedXs: number[] = [];
+
+                          return auditCandles.map((c, idx) => {
+                            const xCenter = idx * colW + colW / 2;
+
+                            // Ensure at least minTimeGap pixels from the previous rendered label
+                            if (renderedXs.length > 0 && xCenter - renderedXs[renderedXs.length - 1] < minTimeGap) {
+                              return null;
+                            }
+
+                            // Avoid collision with chart right edge
+                            if (cW - xCenter < minTimeGap / 2 && idx !== auditCandles.length - 1) {
+                              return null;
+                            }
+
+                            renderedXs.push(xCenter);
+
+                            return (
+                              <g key={`time-${c.timestamp}-${idx}`}>
+                                <line
+                                  x1={xCenter}
+                                  y1={topM + cH}
+                                  x2={xCenter}
+                                  y2={topM + cH + 4}
+                                  stroke="#475569"
+                                  strokeWidth={1}
+                                  shapeRendering="crispEdges"
+                                />
+                                <text
+                                  x={xCenter}
+                                  y={topM + cH + 18}
+                                  fill="#94a3b8"
+                                  fontSize={10.5}
+                                  fontFamily={CHART_SANS_FONT}
+                                  fontWeight="600"
+                                  letterSpacing="0.01em"
+                                  textAnchor="middle"
+                                  style={{ fontFeatureSettings: '"tnum"' }}
+                                >
+                                  {new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                </text>
+                              </g>
+                            );
+                          });
+                        })()}
 
                         {/* Interactive Hover Crosshairs */}
                         {auditHoverX !== null && (
@@ -1114,9 +1157,9 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                               x={10}
                               y={topM + 4}
                               width={cW - 20}
-                              height={24}
+                              height={25}
                               fill="#020617"
-                              fillOpacity={0.92}
+                              fillOpacity={0.94}
                               stroke="#334155"
                               strokeWidth={1}
                               rx={4}
@@ -1125,24 +1168,26 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                               x={20}
                               y={topM + 20}
                               fill="#94a3b8"
-                              fontSize={10.5}
-                              fontFamily="monospace"
+                              fontSize={11}
+                              fontFamily={CHART_SANS_FONT}
+                              letterSpacing="0.01em"
+                              style={{ fontFeatureSettings: '"tnum"' }}
                             >
-                              <tspan fill="#38bdf8" fontWeight="bold">
+                              <tspan fill="#38bdf8" fontWeight="700">
                                 {new Date(auditHoverCandle.timestamp).toISOString().replace('T', ' ').substring(0, 16)} UTC
                               </tspan>
                               <tspan dx="12">O: </tspan>
-                              <tspan fill="#ffffff" fontWeight="bold">${formatPrice(auditHoverCandle.open)}</tspan>
+                              <tspan fill="#ffffff" fontWeight="700">${formatPrice(auditHoverCandle.open)}</tspan>
                               <tspan dx="10">H: </tspan>
-                              <tspan fill="#ffffff" fontWeight="bold">${formatPrice(auditHoverCandle.high)}</tspan>
+                              <tspan fill="#ffffff" fontWeight="700">${formatPrice(auditHoverCandle.high)}</tspan>
                               <tspan dx="10">L: </tspan>
-                              <tspan fill="#ffffff" fontWeight="bold">${formatPrice(auditHoverCandle.low)}</tspan>
+                              <tspan fill="#ffffff" fontWeight="700">${formatPrice(auditHoverCandle.low)}</tspan>
                               <tspan dx="10">C: </tspan>
-                              <tspan fill={auditHoverCandle.close >= auditHoverCandle.open ? '#34d399' : '#f43f5e'} fontWeight="bold">
+                              <tspan fill={auditHoverCandle.close >= auditHoverCandle.open ? '#34d399' : '#f43f5e'} fontWeight="700">
                                 ${formatPrice(auditHoverCandle.close)}
                               </tspan>
                               <tspan dx="10">Vol: </tspan>
-                              <tspan fill="#ffffff" fontWeight="bold">
+                              <tspan fill="#ffffff" fontWeight="700">
                                 {auditHoverCandle.volume.toLocaleString(undefined, { maximumFractionDigits: 1 })}
                               </tspan>
                               {sessionStats.avg20Vol > 0 && (() => {
@@ -1151,14 +1196,14 @@ export const DataRequirementsPanel: React.FC<DataRequirementsPanelProps> = ({ br
                                 return (
                                   <>
                                     <tspan dx="10">Vol/20: </tspan>
-                                    <tspan fill={color} fontWeight="bold">{ratio.toFixed(1)}X</tspan>
+                                    <tspan fill={color} fontWeight="700">{ratio.toFixed(1)}X</tspan>
                                   </>
                                 );
                               })()}
                               <tspan dx="10">Chg: </tspan>
                               <tspan
                                 fill={auditHoverCandle.close >= auditHoverCandle.open ? '#34d399' : '#f43f5e'}
-                                fontWeight="bold"
+                                fontWeight="700"
                               >
                                 {auditHoverCandle.close >= auditHoverCandle.open ? '+' : ''}
                                 {(((auditHoverCandle.close - auditHoverCandle.open) / (auditHoverCandle.open || 1)) * 100).toFixed(2)}%
